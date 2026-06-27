@@ -2,5 +2,7 @@
   "indentation": {
     "spaces": 4
   },
-  "indentSwitchCaseLabels": true
+  "indentSwitchCaseLabels": true,
+  "multilineTrailingCommaBehavior": "neverUsed",
+  "multiElementCollectionTrailingCommas": false
 }

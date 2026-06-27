@@ -1,6 +1,5 @@
 import Foundation
 import Subprocess
-import SystemPackage
 
 let args = CommandLine.arguments
 guard args.count == 3 else {
@@ -17,7 +16,11 @@ let bundleJS = workDir.appendingPathComponent("bundle.js")
 let proc = try await run(
     .name("esbuild"),
     arguments: Arguments([
-        input, "--bundle", "--platform=browser", "--format=iife", "--outfile=\(bundleJS)",
+        input,
+        "--bundle",
+        "--platform=browser",
+        "--format=iife",
+        "--outfile=\(bundleJS)"
     ]),
     output: .discarded
 )

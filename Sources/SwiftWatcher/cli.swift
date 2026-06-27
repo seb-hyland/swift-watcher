@@ -3,7 +3,7 @@ import TOMLDecoder
 
 @main
 struct SwiftWatcher {
-    static let CONFIG_FILE_NAME = "config.toml"
+    static let ConfigFileName = "config.toml"
 
     static func main() async {
         let initArgs = CommandLine.arguments
@@ -13,7 +13,7 @@ struct SwiftWatcher {
         }
         let serveDirPath = URL(fileURLWithPath: serveDir)
 
-        let configFilePath = serveDirPath.appending(path: self.CONFIG_FILE_NAME)
+        let configFilePath = serveDirPath.appending(path: self.ConfigFileName)
         let configData: Data =
             switch Result(catching: { try Data(contentsOf: configFilePath) }) {
                 case .success(let data): data

@@ -17,12 +17,11 @@ actor Server {
     func run() async {
         let router = Router(context: BasicWebSocketRequestContext.self)
 
-        router.get("/rebuild", use: rebuild(request:context:))
-        router.get("/build/:id", use: buildStatus(request:context:))
+        router.get("/rebuild", use: self.rebuild)
+        router.get("/build/:id", use: self.buildStatus)
         router.ws(
             "/build/:id/ws",
-            shouldUpgrade: { request, context in .upgrade([:]) },
-            onUpgrade: buildStatusWebsocket(inbound:outbound:context:)
+            onUpgrade: self.buildStatusWebsocket
         )
         router.add(middleware: BuildDirServer(builder: self.builder))
 
@@ -43,30 +42,32 @@ actor Server {
         }
     }
 
-    private func rebuild(request: Request, context: BasicWebSocketRequestContext) async
-        -> Response
-    {
+    private func rebuild(
+        request: Request,
+        context: BasicWebSocketRequestContext
+    ) async -> Response {
         let id = await self.builder.tryRebuild()
         return Response.redirect(to: "/build/\(id)", type: .normal)
     }
 
-    private func buildStatus(request: Request, context: BasicWebSocketRequestContext) async throws
-        -> Response
-    {
+    private func buildStatus(
+        request: Request,
+        context: BasicWebSocketRequestContext
+    ) async throws -> Response {
         let id = try context.parameters.require("id")
 
-        let logDivs = self.config.build_stages.enumerated().map { idx, stage in
+        let logDivs = self.config.buildStages.enumerated().map { idx, stage in
             """
                 <h1 class="build-stage-name">\(stage.name)</h1>
                 <pre class="log-messages" id="log-messages-\(idx)"></pre>
                 <pre class="log-error" id="log-error-\(idx)"></pre>
             """
         }.joined(separator: "")
-        let document = String(decoding: PackageResources.build_html, as: UTF8.self)
+        let document = String(bytes: PackageResources.build_html, encoding: String.Encoding.utf8)!
             .replacingPlaceholders([
                 "___ID___": id,
                 "___LOG_DIVS___": logDivs,
-                "___BUNDLE_JS___": WebResources.javascript,
+                "___BUNDLE_JS___": WebResources.javascript
             ])
 
         return Response(
@@ -76,13 +77,16 @@ actor Server {
     }
 
     private func buildStatusWebsocket(
-        inbound: WebSocketInboundStream, outbound: WebSocketOutboundWriter,
+        inbound: WebSocketInboundStream,
+        outbound: WebSocketOutboundWriter,
         context: WebSocketRouterContext<BasicWebSocketRequestContext>
     ) async throws {
         func sendMessage(_ msg: Encodable) async {
             let encodedMsg = try? JSONEncoder().encode(msg)
             if case .some(let msg) = encodedMsg {
-                try? await outbound.writeTextMessage(String(decoding: msg, as: UTF8.self))
+                try? await outbound.writeTextMessage(
+                    String(bytes: msg, encoding: String.Encoding.utf8)!
+                )
             }
         }
 
@@ -115,10 +119,8 @@ actor Server {
 
         func handle(
             _ request: Input, context: Context, next: (Input, Context) async throws -> Output
-        )
-            async throws -> Output
-        {
-            guard let lastBuild = await builder.last else {
+        ) async throws -> Output {
+            guard let lastBuild = await self.builder.last else {
                 return Response.redirect(to: "/rebuild", type: .normal)
             }
 
@@ -136,7 +138,7 @@ actor Server {
             }
             var bodyHtml = String(buffer: bodyBytes)
 
-            let banner = await bannerHtml(for: lastBuild)
+            let banner = await self.bannerHtml(for: lastBuild)
             let marker = "<body>"
             if let markerRange = bodyHtml.range(of: marker) {
                 bodyHtml.insert(contentsOf: banner, at: markerRange.upperBound)
@@ -154,7 +156,7 @@ actor Server {
                 body: .init(byteBuffer: .init(string: bodyHtml)))
         }
 
-        func bannerHtml(for serveBuild: Builder.CompletedBuild) async -> String {
+        private func bannerHtml(for serveBuild: Builder.CompletedBuild) async -> String {
             func anchor(to link: String, displaying text: String) -> String {
                 #"<a target="_blank" href="\#(link)">\#(text)</a>"#
             }
@@ -176,9 +178,11 @@ actor Server {
             let bannerMsg =
                 switch await self.builder.currentId {
                     case .some(let curId):
-                        "You are viewing \(serveBuildLink). A rebuild is in progress; \(buildLink(for: curId, displaying: "click here")) to see its status."
+                        "You are viewing \(serveBuildLink). "
+                            + "A rebuild is in progress; \(buildLink(for: curId, displaying: "click here")) to see its status."
                     case .none:
-                        "You are viewing \(serveBuildLink), which finished on \(displayLocal(time: serveBuild.timestamp)). To rebuild, click \(anchor(to: "/rebuild", displaying: "here"))."
+                        "You are viewing \(serveBuildLink), which finished on \(displayLocal(time: serveBuild.timestamp))."
+                            + "To rebuild, click \(anchor(to: "/rebuild", displaying: "here"))."
                 }
             return
                 """

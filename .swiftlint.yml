@@ -1,0 +1,19 @@
+disabled_rules:
+  - switch_case_alignment
+  - nesting
+  - opening_brace
+
+opt_in_rules:
+  - prefer_self_in_static_references
+  - prefer_self_type_over_type_of_self
+
+analyzer_rules:
+  - explicit_self
+
+identifier_name:
+  min_length:
+    warning: 0
+    error: 0
+
+line_length:
+  warning: 140

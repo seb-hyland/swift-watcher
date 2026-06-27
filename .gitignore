@@ -9,3 +9,4 @@ DerivedData/
 
 /test/*
 !/test/config.toml
+swiftbuild.log

@@ -6,7 +6,7 @@ actor Builder {
     private let serveDir: URL
     private let config: WatcherConfig
     private var buildDir: URL {
-        self.serveDir.appending(path: self.config.build_dir)
+        self.serveDir.appending(path: self.config.buildDir)
     }
 
     private var current: OngoingBuild?
@@ -58,7 +58,7 @@ actor Builder {
 
                 do {
                     if !fm.fileExists(atPath: logFilePath.path) {
-                        let _ = fm.createFile(atPath: logFilePath.path, contents: nil)
+                        _ = fm.createFile(atPath: logFilePath.path, contents: nil)
                     }
                     let handle = try FileHandle(forWritingTo: logFilePath)
 
@@ -92,8 +92,8 @@ actor Builder {
     typealias EventStream = AsyncStream<BuildEvent>
     struct BuildEvent: Codable {
         enum BuildEventType: String, Codable {
-            case Message
-            case Error
+            case message
+            case error
         }
 
         let type: BuildEventType
@@ -103,8 +103,8 @@ actor Builder {
         func logFilePath(in buildDir: URL) -> URL {
             let fileName =
                 switch self.type {
-                    case .Message: ".watcher_log_\(self.stage)"
-                    case .Error: ".watcher_err_\(self.stage)"
+                    case .message: ".watcher_log_\(self.stage)"
+                    case .error: ".watcher_err_\(self.stage)"
                 }
             return buildDir.appending(path: fileName)
         }
@@ -134,11 +134,11 @@ actor Builder {
         Task {
             let thisBuildDir = self.buildDir.appending(path: id.description)
 
-            for stageIdx in 0..<self.config.build_stages.count {
+            for stageIdx in 0..<self.config.buildStages.count {
                 let stageIdx = UInt32(stageIdx)
 
-                let msgEvent = BuildEvent(type: .Message, payload: "", stage: stageIdx)
-                let errEvent = BuildEvent(type: .Error, payload: "", stage: stageIdx)
+                let msgEvent = BuildEvent(type: .message, payload: "", stage: stageIdx)
+                let errEvent = BuildEvent(type: .error, payload: "", stage: stageIdx)
 
                 let msgLogsPath = msgEvent.logFilePath(in: thisBuildDir)
                 let errLogsPath = errEvent.logFilePath(in: thisBuildDir)
@@ -146,7 +146,7 @@ actor Builder {
                 if let msgLogs = try? Data(contentsOf: msgLogsPath) {
                     continuation.yield(
                         BuildEvent(
-                            type: .Message,
+                            type: .message,
                             payload: String(buffer: .init(data: msgLogs)),
                             stage: stageIdx
                         )
@@ -155,7 +155,7 @@ actor Builder {
                 if let errLogs = try? Data(contentsOf: errLogsPath) {
                     continuation.yield(
                         BuildEvent(
-                            type: .Error,
+                            type: .error,
                             payload: String(buffer: .init(data: errLogs)),
                             stage: stageIdx
                         )
@@ -199,30 +199,30 @@ actor Builder {
             currentBuild.broadcast(
                 event:
                     BuildEvent(
-                        type: .Error,
+                        type: .error,
                         payload: "Failed to create build directory at \(curBuildDir): \(err)",
                         stage: 0)
             )
             return
         }
 
-        for (stageIdx, stage) in self.config.build_stages.enumerated() {
+        for (stageIdx, stage) in self.config.buildStages.enumerated() {
             switch await self.driveStage(
                 UInt32(stageIdx), of: currentBuild, in: curBuildDir, stage: stage)
             {
                 // Terminate immediately on failure
-                case .Failed: return
-                case .Succeeded: ()
+                case .failed: return
+                case .succeeded: ()
             }
         }
 
-        let artifactPath = curBuildDir.appending(path: self.config.artifact_path)
+        let artifactPath = curBuildDir.appending(path: self.config.artifactPath)
         if !FileManager.default.fileExists(atPath: artifactPath.path) {
             currentBuild.broadcast(
                 event: BuildEvent(
-                    type: .Error,
+                    type: .error,
                     payload: "Expected build output at \(artifactPath)",
-                    stage: UInt32(self.config.build_stages.count).saturatingSub(1),
+                    stage: UInt32(self.config.buildStages.count).saturatingSub(1)
                 )
             )
             return
@@ -233,8 +233,8 @@ actor Builder {
     }
 
     enum StageResult {
-        case Succeeded
-        case Failed
+        case succeeded
+        case failed
     }
 
     private func driveStage(
@@ -249,10 +249,11 @@ actor Builder {
                 arguments: Arguments(stage.args),
                 workingDirectory: FilePath(buildDir.path),
                 error: .combinedWithOutput
-            ) { execution, stdout in
+            ) { _, stdout in
                 for try await line in stdout.lines() {
                     currentBuild.broadcast(
-                        event: BuildEvent(type: .Message, payload: line, stage: stageIdx))
+                        event: BuildEvent(type: .message, payload: line, stage: stageIdx)
+                    )
                 }
             }
         }
@@ -263,29 +264,29 @@ actor Builder {
             case .failure(let err):
                 currentBuild.broadcast(
                     event: BuildEvent(
-                        type: .Error,
+                        type: .error,
                         payload:
                             "Failed to spawn command \(stage.program) with args [\(stage.args.joined(separator: ", "))]: \(err)",
                         stage: stageIdx
                     )
                 )
-                return .Failed
+                return .failed
         }
 
         if !exitStatus.terminationStatus.isSuccess {
             currentBuild.broadcast(
                 event: BuildEvent(
-                    type: .Error,
+                    type: .error,
                     payload: "Build failed with code \(exitStatus.terminationStatus)",
                     stage: stageIdx))
-            return .Failed
+            return .failed
         }
 
         currentBuild.broadcast(
             event: BuildEvent(
-                type: .Message,
+                type: .message,
                 payload: "========== Stage completed successfully ==========",
                 stage: stageIdx))
-        return .Succeeded
+        return .succeeded
     }
 }

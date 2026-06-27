@@ -4,7 +4,7 @@ import UUIDV7
 
 struct BuildId: CustomStringConvertible, Equatable {
     let inner: UUIDV7
-    var description: String { inner.uuidString }
+    var description: String { self.inner.uuidString }
 
     init() {
         self.inner = UUIDV7.now
@@ -23,7 +23,7 @@ struct BuildId: CustomStringConvertible, Equatable {
 
 extension Collection {
     subscript(safe index: Index) -> Element? {
-        return if indices.contains(index) { self[index] } else { nil }
+        return if self.indices.contains(index) { self[index] } else { nil }
     }
 }
 
@@ -61,14 +61,14 @@ extension ResponseBody {
         struct Collector: ResponseBodyWriter {
             let box: ByteBufferBox
             func write(_ buffer: ByteBuffer) async throws {
-                box.buffer.writeImmutableBuffer(buffer)
+                self.box.buffer.writeImmutableBuffer(buffer)
             }
             consuming func finish(_ trailingHeaders: HTTPFields?) async throws {}
         }
 
         let box = ByteBufferBox()
 
-        guard case .success = await Result({ try await write(Collector(box: box)) }) else {
+        guard case .success = await Result({ try await self.write(Collector(box: box)) }) else {
             return nil
         }
 

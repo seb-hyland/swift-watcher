@@ -1,4 +1,4 @@
-build_stages = [
+buildStages = [
   { name = "Prepare build", program = "cp", args = [
     "-r",
     "../../../../igem/wiki/.",
@@ -16,4 +16,5 @@ build_stages = [
     "package-lock.json"
   ] }
 ]
-artifact_path = "web/dist"
+
+artifactPath = "web/dist"

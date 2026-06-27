@@ -30,8 +30,13 @@ let package = Package(
                 .product(name: "UUIDV7", package: "swift-uuidv7"),
                 .product(name: "Subprocess", package: "swift-subprocess"),
             ],
-            exclude: ["Web/main.ts", "Web/ansi_up.ts"],
-            resources: [.embedInCode("Web/build.html")],
+            exclude: [
+                "Web/main.ts",
+                "Web/ansi_up.ts",
+            ],
+            resources: [
+                .embedInCode("Web/build.html")
+            ],
             plugins: ["TsBundler"],
         ),
 

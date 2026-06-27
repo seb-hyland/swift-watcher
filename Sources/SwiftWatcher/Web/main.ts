@@ -26,7 +26,7 @@ const scrollToBottom = () => {
 let ERROR_OCCURED = false;
 
 interface SocketMessage {
-    type: "Message" | "Error";
+    type: "message" | "error";
     payload: string;
     stage: number;
 }
@@ -36,7 +36,7 @@ socket.onmessage = (event) => {
     console.log(message);
 
     switch (message.type) {
-        case "Message": {
+        case "message": {
             const logs_elem = document.getElementById(
                 `log-messages-${message.stage}`,
             )! as HTMLPreElement;
@@ -47,7 +47,7 @@ socket.onmessage = (event) => {
             scrollToBottom();
             break;
         }
-        case "Error": {
+        case "error": {
             ERROR_OCCURED = true;
 
             const error_elem = document.getElementById(

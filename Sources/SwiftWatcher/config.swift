@@ -19,9 +19,9 @@ struct WatcherConfig: Codable, @unchecked Sendable {
     @DefaultCodable<DefaultIp> var ip: String
     @DefaultCodable<DefaultPort> var port: Int32
 
-    @DefaultCodable<DefaultBuildDir> var build_dir: String
-    let build_stages: [BuildStage]
-    let artifact_path: String
+    @DefaultCodable<DefaultBuildDir> var buildDir: String
+    let buildStages: [BuildStage]
+    let artifactPath: String
 }
 
 struct BuildStage: Codable, Sendable {
