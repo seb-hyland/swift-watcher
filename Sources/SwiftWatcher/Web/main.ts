@@ -1,0 +1,72 @@
+import { AnsiUp } from "./ansi_up";
+
+const ansi_up = new AnsiUp();
+ansi_up.escapeForHtml = true;
+
+const current_path = window.location.pathname;
+const ws_protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+
+const ws_url = `${ws_protocol}//${window.location.host}${current_path}/ws`;
+const socket = new WebSocket(ws_url);
+
+const load_build_button = document.getElementById(
+    "load-build-button",
+)! as HTMLButtonElement;
+load_build_button.addEventListener("click", () => {
+    window.location.href = "/";
+});
+
+const log_container = document.getElementById(
+    "log-container",
+)! as HTMLDivElement;
+const scrollToBottom = () => {
+    log_container.scrollTop = log_container.scrollHeight;
+};
+
+let ERROR_OCCURED = false;
+
+interface SocketMessage {
+    type: "Message" | "Error";
+    payload: string;
+    stage: number;
+}
+
+socket.onmessage = (event) => {
+    const message: SocketMessage = JSON.parse(event.data);
+    console.log(message);
+
+    switch (message.type) {
+        case "Message": {
+            const logs_elem = document.getElementById(
+                `log-messages-${message.stage}`,
+            )! as HTMLPreElement;
+
+            const html_payload = ansi_up.ansi_to_html(message.payload);
+            logs_elem.innerHTML += "\n" + html_payload;
+
+            scrollToBottom();
+            break;
+        }
+        case "Error": {
+            ERROR_OCCURED = true;
+
+            const error_elem = document.getElementById(
+                `log-error-${message.stage}`,
+            )! as HTMLPreElement;
+            error_elem.textContent = message.payload;
+
+            scrollToBottom();
+            break;
+        }
+    }
+};
+
+socket.onclose = (_) => {
+    const button_message = ERROR_OCCURED
+        ? "Build failed. Return to previous homepage..."
+        : "Build succeeded! Go to homepage...";
+    load_build_button.textContent = button_message;
+    load_build_button.disabled = false;
+
+    scrollToBottom();
+};

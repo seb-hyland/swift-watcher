@@ -1,0 +1,291 @@
+import Foundation
+import Subprocess
+import SystemPackage
+
+actor Builder {
+    private let serveDir: URL
+    private let config: WatcherConfig
+    private var buildDir: URL {
+        self.serveDir.appending(path: self.config.build_dir)
+    }
+
+    private var current: OngoingBuild?
+    var last: CompletedBuild?
+    var currentId: BuildId? { self.current?.id }
+
+    private class OngoingBuild {
+        let baseBuildDir: URL
+        let id: BuildId
+        var buildDir: URL {
+            self.baseBuildDir.appending(path: self.id.description)
+        }
+
+        var history: [BuildEvent]
+        var continuations: [EventStream.Continuation]
+
+        init(id: BuildId, in baseBuildDir: URL) {
+            self.id = id
+            self.baseBuildDir = baseBuildDir
+
+            self.history = []
+            self.continuations = []
+        }
+
+        deinit {
+            for cont in self.continuations {
+                // Close all streams
+                cont.finish()
+            }
+        }
+
+        func broadcast(event: BuildEvent) {
+            self.history.append(event)
+            for cont in self.continuations {
+                cont.yield(event)
+            }
+        }
+
+        func subscribe() -> BuildLog {
+            let (stream, continuation) = EventStream.makeStream()
+            self.continuations.append(continuation)
+            return BuildLog(history: self.history, stream: stream)
+        }
+
+        func dumpLogs() {
+            let fm = FileManager.default
+            for event in self.history {
+                let logFilePath = event.logFilePath(in: self.buildDir)
+
+                do {
+                    if !fm.fileExists(atPath: logFilePath.path) {
+                        let _ = fm.createFile(atPath: logFilePath.path, contents: nil)
+                    }
+                    let handle = try FileHandle(forWritingTo: logFilePath)
+
+                    // Append to file
+                    try handle.seekToEnd()
+                    try handle.write(contentsOf: Data(event.payload.utf8))
+                    try handle.write(contentsOf: Data("\n".utf8))
+                } catch {
+                    // If an error occurs, just continue
+                    continue
+                }
+            }
+
+        }
+    }
+
+    struct CompletedBuild {
+        let id: BuildId
+        let timestamp: Date
+        let dir: URL
+    }
+
+    init(in serveDir: URL, with config: WatcherConfig) {
+        self.serveDir = serveDir
+        self.config = config
+
+        self.current = nil
+        self.last = nil
+    }
+
+    typealias EventStream = AsyncStream<BuildEvent>
+    struct BuildEvent: Codable {
+        enum BuildEventType: String, Codable {
+            case Message
+            case Error
+        }
+
+        let type: BuildEventType
+        let payload: String
+        let stage: UInt32
+
+        func logFilePath(in buildDir: URL) -> URL {
+            let fileName =
+                switch self.type {
+                    case .Message: ".watcher_log_\(self.stage)"
+                    case .Error: ".watcher_err_\(self.stage)"
+                }
+            return buildDir.appending(path: fileName)
+        }
+    }
+
+    struct BuildLog {
+        let history: [BuildEvent]
+        let stream: EventStream
+    }
+
+    func subscribe() -> (id: BuildId, log: BuildLog)? {
+        if let curBuild = self.current {
+            return (id: curBuild.id, log: curBuild.subscribe())
+        } else {
+            return nil
+        }
+    }
+
+    func subscribeCompleted(id: BuildId) -> BuildLog {
+        precondition(
+            self.current?.id != id, "subscribeCompleted called with ongoing build id \(id)"
+        )
+
+        let (stream, continuation) = EventStream.makeStream()
+
+        // Stream as a continuation that loads background files asynchronously
+        Task {
+            let thisBuildDir = self.buildDir.appending(path: id.description)
+
+            for stageIdx in 0..<self.config.build_stages.count {
+                let stageIdx = UInt32(stageIdx)
+
+                let msgEvent = BuildEvent(type: .Message, payload: "", stage: stageIdx)
+                let errEvent = BuildEvent(type: .Error, payload: "", stage: stageIdx)
+
+                let msgLogsPath = msgEvent.logFilePath(in: thisBuildDir)
+                let errLogsPath = errEvent.logFilePath(in: thisBuildDir)
+
+                if let msgLogs = try? Data(contentsOf: msgLogsPath) {
+                    continuation.yield(
+                        BuildEvent(
+                            type: .Message,
+                            payload: String(buffer: .init(data: msgLogs)),
+                            stage: stageIdx
+                        )
+                    )
+                }
+                if let errLogs = try? Data(contentsOf: errLogsPath) {
+                    continuation.yield(
+                        BuildEvent(
+                            type: .Error,
+                            payload: String(buffer: .init(data: errLogs)),
+                            stage: stageIdx
+                        )
+                    )
+                }
+            }
+        }
+
+        return BuildLog(history: [], stream: stream)
+    }
+
+    /// Triggers a rebuild or subscribes to the ongoing rebuild
+    func tryRebuild() -> BuildId {
+        if let currentBuild = self.current {
+            return currentBuild.id
+        }
+
+        let newBuildId = BuildId()
+        let newBuild = OngoingBuild(id: newBuildId, in: self.buildDir)
+        self.current = newBuild
+
+        // Start the build task, but do not await it within this actor
+        Task { await self.driveBuild(ongoing: newBuild) }
+
+        return newBuildId
+    }
+
+    private func driveBuild(ongoing currentBuild: OngoingBuild) async {
+        defer {
+            currentBuild.dumpLogs()
+            self.current = nil
+        }
+
+        let curBuildDir = self.buildDir.appending(path: currentBuild.id.description)
+
+        let createDirRes = Result {
+            try FileManager.default.createDirectory(
+                at: curBuildDir, withIntermediateDirectories: true)
+        }
+        if case .failure(let err) = createDirRes {
+            currentBuild.broadcast(
+                event:
+                    BuildEvent(
+                        type: .Error,
+                        payload: "Failed to create build directory at \(curBuildDir): \(err)",
+                        stage: 0)
+            )
+            return
+        }
+
+        for (stageIdx, stage) in self.config.build_stages.enumerated() {
+            switch await self.driveStage(
+                UInt32(stageIdx), of: currentBuild, in: curBuildDir, stage: stage)
+            {
+                // Terminate immediately on failure
+                case .Failed: return
+                case .Succeeded: ()
+            }
+        }
+
+        let artifactPath = curBuildDir.appending(path: self.config.artifact_path)
+        if !FileManager.default.fileExists(atPath: artifactPath.path) {
+            currentBuild.broadcast(
+                event: BuildEvent(
+                    type: .Error,
+                    payload: "Expected build output at \(artifactPath)",
+                    stage: UInt32(self.config.build_stages.count).saturatingSub(1),
+                )
+            )
+            return
+        }
+
+        // Only on success
+        self.last = CompletedBuild(id: currentBuild.id, timestamp: Date(), dir: artifactPath)
+    }
+
+    enum StageResult {
+        case Succeeded
+        case Failed
+    }
+
+    private func driveStage(
+        _ stageIdx: UInt32,
+        of currentBuild: OngoingBuild,
+        in buildDir: URL,
+        stage: BuildStage
+    ) async -> StageResult {
+        let spawnResult = await Result {
+            try await run(
+                .name(stage.program),
+                arguments: Arguments(stage.args),
+                workingDirectory: FilePath(buildDir.path),
+                error: .combinedWithOutput
+            ) { execution, stdout in
+                for try await line in stdout.lines() {
+                    currentBuild.broadcast(
+                        event: BuildEvent(type: .Message, payload: line, stage: stageIdx))
+                }
+            }
+        }
+
+        let exitStatus: ExecutionOutcome<()>
+        switch spawnResult {
+            case .success(let status): exitStatus = status
+            case .failure(let err):
+                currentBuild.broadcast(
+                    event: BuildEvent(
+                        type: .Error,
+                        payload:
+                            "Failed to spawn command \(stage.program) with args [\(stage.args.joined(separator: ", "))]: \(err)",
+                        stage: stageIdx
+                    )
+                )
+                return .Failed
+        }
+
+        if !exitStatus.terminationStatus.isSuccess {
+            currentBuild.broadcast(
+                event: BuildEvent(
+                    type: .Error,
+                    payload: "Build failed with code \(exitStatus.terminationStatus)",
+                    stage: stageIdx))
+            return .Failed
+        }
+
+        currentBuild.broadcast(
+            event: BuildEvent(
+                type: .Message,
+                payload: "========== Stage completed successfully ==========",
+                stage: stageIdx))
+        return .Succeeded
+    }
+}
