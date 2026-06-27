@@ -34,9 +34,7 @@ struct SwiftWatcher {
                     )
             }
 
-        let builder = Builder(in: serveDirPath, with: config)
-        let server = Server(alongisde: builder, in: serveDirPath, withConfig: config)
-
+        let server = Server(in: serveDirPath, withConfig: config)
         await server.run()
     }
 }

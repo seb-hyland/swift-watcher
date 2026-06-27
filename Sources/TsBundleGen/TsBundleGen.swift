@@ -39,9 +39,8 @@ let source = """
 
     public enum WebResources {
         public static let javascript: String = {
-            guard let d = Data(base64Encoded: "\(b64)"),
-                  let s = String(data: d, encoding: .utf8) else {
-                fatalError("WebResources: failed to decode embedded bundle")
+            guard let d = Data(base64Encoded: "\(b64)"), let s = String(data: d, encoding: .utf8) else {
+                  fatalError("WebResources: failed to decode embedded bundle")
             }
             return s
         }()

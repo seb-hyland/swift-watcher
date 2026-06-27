@@ -8,8 +8,8 @@ actor Server {
     private let serveDir: URL
     private let builder: Builder
 
-    init(alongisde builder: Builder, in serveDir: URL, withConfig config: WatcherConfig) {
-        self.builder = builder
+    init(in serveDir: URL, withConfig config: WatcherConfig) {
+        self.builder = Builder(in: serveDir, with: config)
         self.serveDir = serveDir
         self.config = config
     }
@@ -163,6 +163,14 @@ actor Server {
                 anchor(to: "/build/\(id)", displaying: text)
             }
 
+            func displayLocal(time: Date) -> String {
+                let fmt = DateFormatter()
+                fmt.dateFormat = "MMMM dd 'at' hh:mm a (zzz)"
+                fmt.timeZone = .current
+
+                return fmt.string(from: time)
+            }
+
             let serveBuildLink = buildLink(for: serveBuild.id, displaying: "build \(serveBuild.id)")
 
             let bannerMsg =
@@ -170,7 +178,7 @@ actor Server {
                     case .some(let curId):
                         "You are viewing \(serveBuildLink). A rebuild is in progress; \(buildLink(for: curId, displaying: "click here")) to see its status."
                     case .none:
-                        "You are viewing \(serveBuildLink), which finished at \(serveBuild.timestamp). To rebuild, click \(anchor(to: "/rebuild", displaying: "here"))."
+                        "You are viewing \(serveBuildLink), which finished on \(displayLocal(time: serveBuild.timestamp)). To rebuild, click \(anchor(to: "/rebuild", displaying: "here"))."
                 }
             return
                 """
