@@ -10,3 +10,4 @@ DerivedData/
 /server/*
 !/server/config.toml
 swiftbuild.log
+.claude

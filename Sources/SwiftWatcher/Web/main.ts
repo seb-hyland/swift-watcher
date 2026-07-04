@@ -1,7 +1,8 @@
 import { AnsiUp } from "./ansi_up";
 
 const ansi_up = new AnsiUp();
-ansi_up.escapeForHtml = true;
+ansi_up.escape_html = true;
+ansi_up.url_allowlist = { http: 1, https: 1 };
 
 const current_path = window.location.pathname;
 const ws_protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
@@ -36,7 +37,6 @@ const setStageState = (stage: number, state: StageState) => {
     if (!el) return;
     el.classList.remove("pending", "running", "success", "failure");
     el.classList.add(state);
-    // Keep only the active/failed stage expanded; collapse finished ones.
     el.open = state === "running" || state === "failure";
 };
 

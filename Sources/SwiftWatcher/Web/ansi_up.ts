@@ -1,84 +1,194 @@
-export interface Color {
-    rgb: number[];
-    class_name: string;
+/* ansi_up.js
+ * author : http://github.com/drudru/
+ * license : MIT
+ * http://github.com/drudru/ansi_up
+ */
+
+"use strict";
+
+//
+// INTERFACES
+//
+
+interface AU_Color
+{
+    rgb:number[];
+    class_name:string;
 }
 
-export class AnsiUp {
-    ansi_colors = [
-        // Normal colors
-        [
-            { rgb: [60, 56, 54], class_name: "ansi-black" },
-            { rgb: [143, 37, 37], class_name: "ansi-red" },
-            { rgb: [54, 94, 54], class_name: "ansi-green" },
-            { rgb: [138, 96, 32], class_name: "ansi-yellow" },
-            { rgb: [62, 76, 117], class_name: "ansi-blue" },
-            { rgb: [100, 65, 133], class_name: "ansi-magenta" },
-            { rgb: [74, 143, 143], class_name: "ansi-cyan" },
-            { rgb: [240, 230, 211], class_name: "ansi-white" },
-        ],
+// Represents the output of process_ansi(): a snapshot of the AnsiUp state machine
+// at a given point in time, which wraps a fragment of text. This would allow deferred
+// processing of text fragments and colors, if ever needed.
+interface TextWithAttr {
+    fg:AU_Color;
+    bg:AU_Color;
+    bold:boolean;
+    faint:boolean;
+    italic: boolean;
+    underline: boolean;
+    text:string;
+}
 
-        // Bright colors
-        [
-            { rgb: [60, 56, 54], class_name: "ansi-black" },
-            { rgb: [143, 37, 37], class_name: "ansi-red" },
-            { rgb: [54, 94, 54], class_name: "ansi-green" },
-            { rgb: [138, 96, 32], class_name: "ansi-yellow" },
-            { rgb: [62, 76, 117], class_name: "ansi-blue" },
-            { rgb: [100, 65, 133], class_name: "ansi-magenta" },
-            { rgb: [74, 143, 143], class_name: "ansi-cyan" },
-            { rgb: [240, 230, 211], class_name: "ansi-white" },
-        ],
-    ];
+// Used internally when breaking up the raw text into packets
 
-    /**
-     * 256 Colors Palette
-     * CSS RGB strings - ex. "255, 255, 255"
-     */
-    private palette_256: Color[];
+enum PacketKind {
+    EOS,
+    Text,
+    Incomplete,         // An Incomplete ESC sequence
+    ESC,                // A single ESC char - random
+    Unknown,            // A valid CSI but not an SGR code
+    SGR,                // Select Graphic Rendition
+    OSCURL,             // Operating System Command
+}
 
-    private fg: Color;
-    private bg: Color;
-    private bright: boolean;
+interface TextPacket {
+    kind:PacketKind;
+    text:string;
+     url:string;
+}
 
-    private _useClasses: boolean;
-    private _escapeForHtml;
-    private _sgr_regex: RegExp;
+//
+// MAIN CLASS
+//
 
-    private _buffer: string;
+export class AnsiUp
+{
+    VERSION = "6.0.6";
 
-    constructor() {
-        this.setup_256_palette();
-        this.useClasses = false;
-        this.escapeForHtml = true;
+    //
+    // *** SEE README ON GITHUB FOR PUBLIC API ***
+    //
 
-        this.bright = false;
+    // 256 Colors Palette
+    // CSS RGB strings - ex. "255, 255, 255"
+    private ansi_colors:AU_Color[][];
+    private palette_256:AU_Color[];
+
+    private fg:AU_Color;
+    private bg:AU_Color;
+    private bold:boolean;
+    private faint:boolean;
+    private italic: boolean;
+    private underline:boolean;
+    private _use_classes:boolean;
+
+    private _csi_regex:RegExp;
+
+    private _osc_st:RegExp;
+    private _osc_regex:RegExp;
+
+    private _url_allowlist:{};
+    private _escape_html:boolean;
+
+    private _buffer:string;
+
+    private _boldStyle:string;
+    private _faintStyle:string;
+    private _italicStyle:string;
+    private _underlineStyle:string;
+
+
+    constructor()
+    {
+        // All construction occurs here
+        this.setup_palettes();
+        this._use_classes = false;
+
+        this.bold = false;
+        this.faint = false;
+        this.italic = false;
+        this.underline = false;
         this.fg = this.bg = null;
 
-        this._buffer = "";
+        this._buffer = '';
+
+        this._url_allowlist = { 'http':1, 'https':1 };
+        this._escape_html = true;
+
+        this.boldStyle        = 'font-weight:bold';
+        this.faintStyle       = 'opacity:0.7';
+        this.italicStyle      = 'font-style:italic';
+        this.underlineStyle   = 'text-decoration:underline'
     }
 
-    set useClasses(useClasses: boolean) {
-        this._useClasses = useClasses;
+    set use_classes(arg:boolean)
+    {
+        this._use_classes = arg;
     }
 
-    get useClasses(): boolean {
-        return this._useClasses;
+    get use_classes():boolean
+    {
+        return this._use_classes;
     }
 
-    set escapeForHtml(arg: boolean) {
-        this._escapeForHtml = arg;
+    set url_allowlist(arg:{})
+    {
+        this._url_allowlist = arg;
     }
 
-    get escapeForHtml(): boolean {
-        return this._escapeForHtml;
+    get url_allowlist():{}
+    {
+        return this._url_allowlist;
     }
 
-    private setup_256_palette(): void {
+    set escape_html(arg:boolean)
+    {
+        this._escape_html = arg;
+    }
+
+    get escape_html():boolean
+    {
+        return this._escape_html;
+    }
+
+    set boldStyle(arg:string)      {        this._boldStyle      = arg; }
+    get boldStyle():string         { return this._boldStyle;            }
+    set faintStyle(arg:string)     {        this._faintStyle     = arg; }
+    get faintStyle():string        { return this._faintStyle;           }
+    set italicStyle(arg:string)    {        this._italicStyle    = arg; }
+    get italicStyle():string       { return this._italicStyle;          }
+    set underlineStyle(arg:string) {        this._underlineStyle = arg; }
+    get underlineStyle():string    { return this._underlineStyle;       }
+
+
+    private setup_palettes():void
+    {
+        // LOCAL MOD (swift-watcher): upstream's default palette is replaced with a
+        // muted low-contrast one, and the bright row is held identical to the normal
+        // row so SGR 90-97 / 100-107 render the same as 30-37 / 40-47.
+        // Re-apply this block when upgrading ansi_up; everything else is stock v6.0.6.
+        this.ansi_colors =
+        [
+            // Normal colors
+            [
+                { rgb: [ 60,  56,  54],  class_name: "ansi-black"   },
+                { rgb: [143,  37,  37],  class_name: "ansi-red"     },
+                { rgb: [ 54,  94,  54],  class_name: "ansi-green"   },
+                { rgb: [138,  96,  32],  class_name: "ansi-yellow"  },
+                { rgb: [ 62,  76, 117],  class_name: "ansi-blue"    },
+                { rgb: [100,  65, 133],  class_name: "ansi-magenta" },
+                { rgb: [ 74, 143, 143],  class_name: "ansi-cyan"    },
+                { rgb: [240, 230, 211],  class_name: "ansi-white"   }
+            ],
+
+            // Bright colors - intentionally identical to the normal row (see above)
+            [
+                { rgb: [ 60,  56,  54],  class_name: "ansi-bright-black"   },
+                { rgb: [143,  37,  37],  class_name: "ansi-bright-red"     },
+                { rgb: [ 54,  94,  54],  class_name: "ansi-bright-green"   },
+                { rgb: [138,  96,  32],  class_name: "ansi-bright-yellow"  },
+                { rgb: [ 62,  76, 117],  class_name: "ansi-bright-blue"    },
+                { rgb: [100,  65, 133],  class_name: "ansi-bright-magenta" },
+                { rgb: [ 74, 143, 143],  class_name: "ansi-bright-cyan"    },
+                { rgb: [240, 230, 211],  class_name: "ansi-bright-white"   }
+            ]
+        ];
+
         this.palette_256 = [];
 
         // Index 0..15 : Ansi-Colors
-        this.ansi_colors.forEach((palette) => {
-            palette.forEach((rec) => {
+        this.ansi_colors.forEach( palette => {
+            palette.forEach( rec => {
                 this.palette_256.push(rec);
             });
         });
@@ -89,11 +199,8 @@ export class AnsiUp {
         for (let r = 0; r < 6; ++r) {
             for (let g = 0; g < 6; ++g) {
                 for (let b = 0; b < 6; ++b) {
-                    let c = {
-                        rgb: [levels[r], levels[g], levels[b]],
-                        class_name: "truecolor",
-                    };
-                    this.palette_256.push(c);
+                    let col = {rgb:[levels[r], levels[g], levels[b]], class_name:'truecolor'};
+                    this.palette_256.push(col);
                 }
             }
         }
@@ -101,307 +208,580 @@ export class AnsiUp {
         // Index 232..255 : Grayscale
         let grey_level = 8;
         for (let i = 0; i < 24; ++i, grey_level += 10) {
-            let c = {
-                rgb: [grey_level, grey_level, grey_level],
-                class_name: "truecolor",
-            };
-            this.palette_256.push(c);
+            let gry = {rgb:[grey_level, grey_level, grey_level], class_name:'truecolor'};
+            this.palette_256.push(gry);
         }
     }
 
-    private doEscape(txt: string): string {
-        return txt.replace(/[&<>]/gm, (str) => {
-            if (str === "&") return "&amp;";
-            if (str === "<") return "&lt;";
-            if (str === ">") return "&gt;";
-        });
+    private escape_txt_for_html(txt:string):string
+    {
+      if (!this._escape_html)
+          return txt;
+      return txt.replace(/[&<>"']/gm, (str) => {
+        if (str === "&")  return "&amp;";
+        if (str === "<")  return "&lt;";
+        if (str === ">")  return "&gt;";
+        if (str === "\"") return "&quot;";
+        if (str === "'")  return "&#x27;";
+      });
     }
 
-    private old_linkify(txt: string): string {
-        return txt.replace(/(https?:\/\/[^\s]+)/gm, (str) => {
-            return `<a href="${str}">${str}</a>`;
-        });
+    private append_buffer(txt:string) {
+
+        var str = this._buffer + txt;
+        this._buffer = str;
     }
 
-    private detect_incomplete_ansi(txt: string) {
-        return !/.*?[\x40-\x7e]/.test(txt);
+    private get_next_packet():TextPacket {
+
+        var pkt =
+            {
+                kind: PacketKind.EOS,
+                text: '',
+                 url: ''
+            } ;
+
+        var len = this._buffer.length;
+        if (len == 0)
+            return pkt;
+
+        var pos = this._buffer.indexOf("\x1B");
+
+        // The most common case, no ESC codes
+        if (pos == -1)
+        {
+            pkt.kind = PacketKind.Text;
+            pkt.text = this._buffer;
+            this._buffer = '';
+            return pkt;
+        }
+
+        if (pos > 0)
+        {
+            pkt.kind = PacketKind.Text;
+            pkt.text = this._buffer.slice(0, pos);
+            this._buffer = this._buffer.slice(pos);
+            return pkt;
+        }
+
+        // NOW WE HANDLE ESCAPES
+        if (pos == 0)
+        {
+            // All of the sequences typically need at least 3 characters
+            // So, wait until we have at least that many
+            if (len < 3)
+            {
+                pkt.kind = PacketKind.Incomplete;
+                return pkt;
+            }
+
+            var next_char = this._buffer.charAt(1);
+
+            // We treat this as a single ESC
+            // No transformation
+            if ((next_char != '[') && (next_char != ']') && (next_char != '('))
+            {
+                pkt.kind = PacketKind.ESC;
+                pkt.text = this._buffer.slice(0, 1);
+                this._buffer = this._buffer.slice(1);
+                return pkt;
+            }
+
+            // OK is this an SGR or OSC that we handle
+
+            // SGR CHECK
+            if (next_char == '[')
+            {
+                // We do this regex initialization here so
+                // we can keep the regex close to its use (Readability)
+
+                // All ansi codes are typically in the following format.
+                // We parse it and focus specifically on the
+                // graphics commands (SGR)
+                //
+                // CONTROL-SEQUENCE-INTRODUCER CSI             (ESC, '[')
+                // PRIVATE-MODE-CHAR                           (!, <, >, ?)
+                // Numeric parameters separated by semicolons  ('0' - '9', ';')
+                // Intermediate-modifiers                      (0x20 - 0x2f)
+                // COMMAND-CHAR                                (0x40 - 0x7e)
+                //
+
+                if (!this._csi_regex) {
+
+                    this._csi_regex = rgx`
+                        ^                           # beginning of line
+                                                    #
+                                                    # First attempt
+                        (?:                         # legal sequence
+                          \x1b\[                      # CSI
+                          ([\x3c-\x3f]?)              # private-mode char
+                          ([\d;]*)                    # any digits or semicolons
+                          ([\x20-\x2f]?               # an intermediate modifier
+                          [\x40-\x7e])                # the command
+                        )
+                        |                           # alternate (second attempt)
+                        (?:                         # illegal sequence
+                          \x1b\[                      # CSI
+                          [\x20-\x7e]*                # anything legal
+                          ([\x00-\x1f:])              # anything illegal
+                        )
+                    `;
+                }
+
+                let match = this._buffer.match(this._csi_regex);
+
+                // This match is guaranteed to terminate (even on
+                // invalid input). The key is to match on legal and
+                // illegal sequences.
+                // The first alternate matches everything legal and
+                // the second matches everything illegal.
+                //
+                // If it doesn't match, then we have not received
+                // either the full sequence or an illegal sequence.
+                // If it does match, the presence of field 4 tells
+                // us whether it was legal or illegal.
+
+                if (match === null)
+                {
+                    pkt.kind = PacketKind.Incomplete;
+                    return pkt;
+                }
+
+                // match is an array
+                // 0 - total match
+                // 1 - private mode chars group
+                // 2 - digits and semicolons group
+                // 3 - command
+                // 4 - illegal char
+
+                if (match[4])
+                {
+                    // Illegal sequence, just remove the ESC
+                    pkt.kind = PacketKind.ESC;
+                    pkt.text = this._buffer.slice(0, 1);
+                    this._buffer = this._buffer.slice(1);
+                    return pkt;
+                }
+
+                // If not a valid SGR, we don't handle
+                if ( (match[1] != '') || (match[3] != 'm'))
+                    pkt.kind = PacketKind.Unknown;
+                else
+                    pkt.kind = PacketKind.SGR;
+
+                pkt.text = match[2] // Just the parameters
+
+                var rpos = match[0].length;
+                this._buffer = this._buffer.slice(rpos);
+                return pkt;
+            }
+            else
+            // OSC CHECK
+            if (next_char == ']')
+            {
+                if (len < 4)
+                {
+                        pkt.kind = PacketKind.Incomplete;
+                        return pkt;
+                }
+
+                if (    (this._buffer.charAt(2) != '8')
+                     || (this._buffer.charAt(3) != ';') )
+                {
+                    // This is not a match, so we'll just treat it as ESC
+                    pkt.kind = PacketKind.ESC;
+                    pkt.text = this._buffer.slice(0, 1);
+                    this._buffer = this._buffer.slice(1);
+                    return pkt;
+                }
+
+                // We do this regex initialization here so
+                // we can keep the regex close to its use (Readability)
+
+                // Matching a Hyperlink OSC with a regex is difficult
+                // because Javascript's regex engine doesn't support
+                // 'partial match' support.
+                //
+                // Therefore, we require the system to match the
+                // string-terminator(ST) before attempting a match.
+                // Once we find it, we attempt the Hyperlink-Begin
+                // match.
+                // If that goes ok, we scan forward for the next
+                // ST.
+                // Finally, we try to match it all and return
+                // the sequence.
+                // Also, it is important to note that we consider
+                // certain control characters as an invalidation of
+                // the entire sequence.
+
+                // We do regex initializations here so
+                // we can keep the regex close to its use (Readability)
+
+
+                // STRING-TERMINATOR
+                // This is likely to terminate in most scenarios
+                // because it will terminate on a newline
+
+                if (!this._osc_st) {
+
+                    this._osc_st = rgxG`
+                        (?:                         # legal sequence
+                          (\x1b\\)                    # ESC \
+                          |                           # alternate
+                          (\x07)                      # BEL (what xterm did)
+                        )
+                        |                           # alternate (second attempt)
+                        (                           # illegal sequence
+                          [\x00-\x06]                 # anything illegal
+                          |                           # alternate
+                          [\x08-\x1a]                 # anything illegal
+                          |                           # alternate
+                          [\x1c-\x1f]                 # anything illegal
+                        )
+                    `;
+                }
+
+                // VERY IMPORTANT
+                // We do a stateful regex match with exec.
+                // If the regex is global, and it used with 'exec',
+                // then it will search starting at the 'lastIndex'
+                // If it matches, the regex can be used again to
+                // find the next match.
+                this._osc_st.lastIndex = 0;
+
+
+                {
+                    let match = this._osc_st.exec( this._buffer );
+
+                    if (match === null)
+                    {
+                        pkt.kind = PacketKind.Incomplete;
+                        return pkt;
+                    }
+
+                    // If an illegal character was found, bail on the match
+                    if (match[3])
+                    {
+                        // Illegal sequence, just remove the ESC
+                        pkt.kind = PacketKind.ESC;
+                        pkt.text = this._buffer.slice(0, 1);
+                        this._buffer = this._buffer.slice(1);
+                        return pkt;
+                    }
+                }
+
+
+
+                // OK - we might have the prefix and URI
+                // Lets start our search for the next ST
+                // past this index
+
+                {
+                    let match = this._osc_st.exec( this._buffer );
+
+                    if (match === null)
+                    {
+                        pkt.kind = PacketKind.Incomplete;
+                        return pkt;
+                    }
+
+                    // If an illegal character was found, bail on the match
+                    if (match[3])
+                    {
+                        // Illegal sequence, just remove the ESC
+                        pkt.kind = PacketKind.ESC;
+                        pkt.text = this._buffer.slice(0, 1);
+                        this._buffer = this._buffer.slice(1);
+                        return pkt;
+                    }
+                }
+
+                // OK, at this point we should have a FULL match!
+                //
+                // Lets try to match that now
+
+                if (!this._osc_regex) {
+
+                    this._osc_regex = rgx`
+                        ^                           # beginning of line
+                                                    #
+                        \x1b\]8;                    # OSC Hyperlink
+                        [\x20-\x3a\x3c-\x7e]*       # params (excluding ;)
+                        ;                           # end of params
+                        ([\x21-\x7e]{0,512})        # URL capture
+                        (?:                         # ST
+                          (?:\x1b\\)                  # ESC \
+                          |                           # alternate
+                          (?:\x07)                    # BEL (what xterm did)
+                        )
+                        ([\x20-\x7e]+)              # TEXT capture
+                        \x1b\]8;;                   # OSC Hyperlink End
+                        (?:                         # ST
+                          (?:\x1b\\)                  # ESC \
+                          |                           # alternate
+                          (?:\x07)                    # BEL (what xterm did)
+                        )
+                    `;
+                }
+
+                let match = this._buffer.match(this._osc_regex);
+
+                if (match === null)
+                {
+                    // Illegal sequence, just remove the ESC
+                    pkt.kind = PacketKind.ESC;
+                    pkt.text = this._buffer.slice(0, 1);
+                    this._buffer = this._buffer.slice(1);
+                    return pkt;
+                }
+
+                // match is an array
+                // 0 - total match
+                // 1 - URL
+                // 2 - Text
+
+                // If a valid SGR
+                pkt.kind = PacketKind.OSCURL;
+                pkt.url  = match[1];
+                pkt.text = match[2];
+
+                var rpos = match[0].length;
+                this._buffer = this._buffer.slice(rpos);
+                return pkt;
+            }
+            else
+            // Other ESC CHECK
+            if (next_char == '(')
+            {
+                // This specifies the character set, which
+                // should just be ignored
+
+                // We have at least 3, so drop the sequence
+                pkt.kind = PacketKind.Unknown;
+                this._buffer = this._buffer.slice(3);
+                return pkt;
+            }
+        }
     }
 
-    private detect_incomplete_link(txt: string) {
-        let found = false;
-        for (var i = txt.length - 1; i > 0; i--) {
-            if (/\s|\x1B/.test(txt[i])) {
-                found = true;
+    ansi_to_html(txt:string):string {
+
+        this.append_buffer(txt);
+
+        var blocks:string[] = [];
+
+        while (true)
+        {
+            var packet = this.get_next_packet();
+
+            if (    (packet.kind == PacketKind.EOS)
+                 || (packet.kind == PacketKind.Incomplete)  )
                 break;
-            }
+
+            //Drop single ESC or Unknown CSI
+            if (    (packet.kind == PacketKind.ESC)
+                 || (packet.kind == PacketKind.Unknown)  )
+                continue;
+
+            if (packet.kind == PacketKind.Text)
+                blocks.push( this.transform_to_html(this.with_state(packet)) );
+            else
+            if (packet.kind == PacketKind.SGR)
+                this.process_ansi(packet);
+            else
+            if (packet.kind == PacketKind.OSCURL)
+                blocks.push( this.process_hyperlink(packet) );
         }
-
-        if (!found) {
-            // Handle one other case
-            // Maybe the whole string is a URL?
-            if (/(https?:\/\/[^\s]+)/.test(txt)) {
-                return 0;
-            } else return -1;
-        }
-
-        // Test if possible prefix
-        const prefix = txt.substr(i + 1, 4);
-
-        if (prefix.length === 0) return -1;
-
-        if ("http".indexOf(prefix) === 0) {
-            return i + 1;
-        }
-    }
-
-    ansi_to_html(txt: string): string {
-        const pkt = this._buffer + txt;
-        this._buffer = "";
-
-        const raw_text_pkts = pkt.split(/\x1B\[/);
-
-        if (raw_text_pkts.length === 1) raw_text_pkts.push("");
-
-        // COMPLEX - BEGIN
-
-        // Validate the last chunks for:
-        // - incomplete ANSI sequence
-        // - incomplete ESC
-        // If any of these occur, we may have to buffer
-        let last_pkt = raw_text_pkts[raw_text_pkts.length - 1];
-
-        // - incomplete ANSI sequence
-        if (last_pkt.length > 0 && this.detect_incomplete_ansi(last_pkt)) {
-            this._buffer = "\x1B\[" + last_pkt;
-            raw_text_pkts.pop();
-            raw_text_pkts.push("");
-        } else {
-            // - incomplete ESC
-            if (last_pkt.slice(-1) === "\x1B") {
-                this._buffer = "\x1B";
-                console.log("raw", raw_text_pkts);
-                raw_text_pkts.pop();
-                raw_text_pkts.push(last_pkt.substr(0, last_pkt.length - 1));
-                console.log(raw_text_pkts);
-                console.log(last_pkt);
-            }
-            // - Incomplete ESC, only one packet
-            if (
-                raw_text_pkts.length === 2 &&
-                raw_text_pkts[1] == "" &&
-                raw_text_pkts[0].slice(-1) == "\x1B"
-            ) {
-                this._buffer = "\x1B";
-                last_pkt = raw_text_pkts.shift();
-                raw_text_pkts.unshift(last_pkt.substr(0, last_pkt.length - 1));
-            }
-        }
-
-        // COMPLEX - END
-
-        const first_txt = this.wrap_text(raw_text_pkts.shift()); // the first pkt is not the result of the split
-
-        let blocks = raw_text_pkts.map((block) =>
-            this.wrap_text(this.process_ansi(block)),
-        );
-
-        if (first_txt.length > 0) blocks.unshift(first_txt);
 
         return blocks.join("");
     }
 
-    ansi_to_text(txt: string): string {
-        let raw_text_pkts = txt.split(/\x1B\[/);
-        let first_txt = raw_text_pkts.shift(); // the first pkt is not the result of the split
-
-        let blocks = raw_text_pkts.map((block) => this.process_ansi(block));
-
-        if (first_txt.length > 0) blocks.unshift(first_txt);
-
-        return blocks.join("");
+    private with_state(pkt:TextPacket):TextWithAttr {
+        return { bold: this.bold, faint: this.faint, italic: this.italic, underline: this.underline, fg: this.fg, bg: this.bg, text: pkt.text };
     }
 
-    private wrap_text(txt: string): string {
-        if (txt.length === 0) return txt;
+    private process_ansi(pkt:TextPacket)
+    {
+      // Ok - we have a valid "SGR" (Select Graphic Rendition)
 
-        if (this._escapeForHtml) txt = this.doEscape(txt);
+      let sgr_cmds = pkt.text.split(';');
 
-        if (!this.bright && this.fg === null && this.bg === null) return txt;
+      // Each of these params affects the SGR state
 
-        let styles: string[] = [];
-        let classes: string[] = [];
+      // Why do we shift through the array instead of a forEach??
+      // ... because some commands consume the params that follow !
 
-        let fg = this.fg;
-        let bg = this.bg;
+      while (sgr_cmds.length > 0) {
+          let sgr_cmd_str = sgr_cmds.shift();
+          let num = parseInt(sgr_cmd_str, 10);
 
-        // Handle the case where we are told to be bright, but without a color
-        if (fg === null && this.bright) fg = this.ansi_colors[1][7];
+      // TODO
+      // AT SOME POINT, JUST CONVERT TO A LOOKUP TABLE
+          if (isNaN(num) || num === 0) {
+              this.fg        = null;
+              this.bg        = null;
+              this.bold      = false;
+              this.faint     = false;
+              this.italic    = false;
+              this.underline = false;
 
-        if (!this._useClasses) {
+          } else if (num ===  1) { this.bold      = true;
+          } else if (num ===  2) { this.faint     = true;
+          } else if (num ===  3) { this.italic    = true;
+          } else if (num ===  4) { this.underline = true;
+          } else if (num === 21) { this.bold      = false;
+          } else if (num === 22) { this.faint     = false; this.bold = false;
+          } else if (num === 23) { this.italic    = false;
+          } else if (num === 24) { this.underline = false;
+
+          } else if (num === 39) { this.fg = null;
+          } else if (num === 49) { this.bg = null;
+
+          } else if ((num >=  30) && (num <  38)) { this.fg = this.ansi_colors[0][(num -  30)];
+          } else if ((num >=  40) && (num <  48)) { this.bg = this.ansi_colors[0][(num -  40)];
+          } else if ((num >=  90) && (num <  98)) { this.fg = this.ansi_colors[1][(num -  90)];
+          } else if ((num >= 100) && (num < 108)) { this.bg = this.ansi_colors[1][(num - 100)];
+
+          } else if (num === 38 || num === 48) {
+
+              // extended set foreground/background color
+
+              // validate that param exists
+              if (sgr_cmds.length > 0) {
+                  // extend color (38=fg, 48=bg)
+                  let is_foreground = (num === 38);
+
+                  let mode_cmd = sgr_cmds.shift();
+
+                  // MODE '5' - 256 color palette
+                  if (mode_cmd === '5' && sgr_cmds.length > 0) {
+                      let palette_index = parseInt(sgr_cmds.shift(), 10);
+                      if (palette_index >= 0 && palette_index <= 255) {
+                          if (is_foreground)
+                              this.fg = this.palette_256[palette_index];
+                          else
+                              this.bg = this.palette_256[palette_index];
+                      }
+                  }
+
+                  // MODE '2' - True Color
+                  if (mode_cmd === '2' && sgr_cmds.length > 2) {
+                      let r = parseInt(sgr_cmds.shift(), 10);
+                      let g = parseInt(sgr_cmds.shift(), 10);
+                      let b = parseInt(sgr_cmds.shift(), 10);
+
+                      if ((r >= 0 && r <= 255) && (g >= 0 && g <= 255) && (b >= 0 && b <= 255)) {
+                          let c = { rgb: [r,g,b], class_name: 'truecolor'};
+                          if (is_foreground)
+                              this.fg = c;
+                          else
+                              this.bg = c;
+                      }
+                  }
+              }
+          }
+      }
+    }
+
+    private transform_to_html(fragment:TextWithAttr):string {
+        let txt = fragment.text;
+
+        if (txt.length === 0)
+            return txt;
+
+        txt = this.escape_txt_for_html(txt);
+
+        // If colors not set, default style is used
+        if (!fragment.bold && !fragment.italic && !fragment.faint && !fragment.underline && fragment.fg === null && fragment.bg === null)
+            return txt;
+
+        let styles:string[] = [];
+        let classes:string[] = [];
+
+        let fg = fragment.fg;
+        let bg = fragment.bg;
+
+        // Note on bold: https://stackoverflow.com/questions/6737005/what-are-some-advantages-to-using-span-style-font-weightbold-rather-than-b?rq=1
+        if (fragment.bold)      styles.push(this._boldStyle);
+        if (fragment.faint)     styles.push(this._faintStyle);
+        if (fragment.italic)    styles.push(this._italicStyle);
+        if (fragment.underline) styles.push(this._underlineStyle);
+
+        if (!this._use_classes) {
             // USE INLINE STYLES
-            if (fg) styles.push(`color:rgb(${fg.rgb.join(",")})`);
-            if (bg) styles.push(`background-color:rgb(${bg.rgb})`);
+            if (fg)
+                styles.push(`color:rgb(${fg.rgb.join(',')})`);
+            if (bg)
+                styles.push(`background-color:rgb(${bg.rgb})`);
         } else {
             // USE CLASSES
             if (fg) {
-                if (fg.class_name !== "truecolor") {
+                if (fg.class_name !== 'truecolor') {
                     classes.push(`${fg.class_name}-fg`);
                 } else {
-                    styles.push(`color:rgb(${fg.rgb.join(",")})`);
+                    styles.push(`color:rgb(${fg.rgb.join(',')})`);
                 }
             }
             if (bg) {
-                if (bg.class_name !== "truecolor") {
+                if (bg.class_name !== 'truecolor') {
                     classes.push(`${bg.class_name}-bg`);
                 } else {
-                    styles.push(`background-color:rgb(${bg.rgb.join(",")})`);
+                    styles.push(`background-color:rgb(${bg.rgb.join(',')})`);
                 }
             }
         }
 
-        let class_string = "";
-        let style_string = "";
+        let class_string = '';
+        let style_string = '';
 
-        if (classes.length) class_string = ` class="${classes.join(" ")}"`;
+        if (classes.length)
+            class_string = ` class="${classes.join(' ')}"`;
 
-        if (styles.length) style_string = ` style="${styles.join(";")}"`;
+        if (styles.length)
+            style_string = ` style="${styles.join(';')}"`;
 
-        return `<span${class_string}${style_string}>${txt}</span>`;
-    }
+        return `<span${style_string}${class_string}>${txt}</span>`;
+    };
 
-    private process_ansi(block: string): string {
-        // This must only be called with a string that started with a CSI (the string split above)
-        // The CSI must not be in the string. We consider this string to be a 'block'.
-        // It has an ANSI command at the front that affects the text that follows it.
-        //
-        // This regex is designed to parse an ANSI terminal CSI command. To be more specific,
-        // we follow the XTERM conventions vs. the various other "standards".
-        // http://invisible-island.net/xterm/ctlseqs/ctlseqs.html
-        //
-        // All ansi codes are typically in the following format. We parse it and focus
-        // specifically on the graphics commands (SGR)
-        //
-        // CONTROL-SEQUENCE-INTRODUCER CSI             (ESC, '[')
-        // PRIVATE-MODE-CHAR                           (!, <, >, ?)
-        // Numeric parameters separated by semicolons  ('0' - '9', ';')
-        // Intermediate-modifiers                      (0x20 - 0x2f)
-        // COMMAND-CHAR                                (0x40 - 0x7e)
-        //
-        // We use a regex to parse into capture groups the PRIVATE-MODE-CHAR to the COMMAND
-        // and the following text
-        //
+    private process_hyperlink(pkt:TextPacket):string
+    {
+        // Check URL scheme
+        let parts = pkt.url.split(':');
+        if (parts.length < 1)
+            return '';
 
-        // Lazy regex creation to keep nicely commented code here
-        // NOTE: default is multiline (workaround for now til I can
-        // determine flags inline)
-        if (!this._sgr_regex) {
-            this._sgr_regex = this.rgx`
-              ^                           # beginning of line
-              ([!\x3c-\x3f]?)             # a private-mode char (!, <, =, >, ?)
-              ([\d;]*)                    # any digits or semicolons
-              ([\x20-\x2f]?               # an intermediate modifier
-               [\x40-\x7e])               # the command
-              ([\s\S]*)                   # any text following this CSI sequence
-              `;
-        }
+        if (! this._url_allowlist[parts[0]])
+            return '';
 
-        let matches = block.match(this._sgr_regex);
-
-        // The regex should have handled all cases!
-        if (!matches) return block;
-
-        let orig_txt = matches[4];
-
-        if (matches[1] !== "" || matches[3] !== "m") return orig_txt;
-
-        // Ok - we have a valid "SGR" (Select Graphic Rendition)
-
-        let sgr_cmds = matches[2].split(";");
-
-        // Each of these params affects the SGR state
-
-        // Why do we shift through the array instead of a forEach??
-        // ... because some commands consume the params that follow !
-        while (sgr_cmds.length > 0) {
-            let sgr_cmd_str = sgr_cmds.shift();
-            let num = parseInt(sgr_cmd_str, 10);
-
-            if (isNaN(num) || num === 0) {
-                this.fg = this.bg = null;
-                this.bright = false;
-            } else if (num === 1) {
-                this.bright = true;
-            } else if (num === 22) {
-                this.bright = false;
-            } else if (num === 39) {
-                this.fg = null;
-            } else if (num === 49) {
-                this.bg = null;
-            } else if (num >= 30 && num < 38) {
-                let bidx = this.bright ? 1 : 0;
-                this.fg = this.ansi_colors[bidx][num - 30];
-            } else if (num >= 90 && num < 98) {
-                this.fg = this.ansi_colors[1][num - 90];
-            } else if (num >= 40 && num < 48) {
-                this.bg = this.ansi_colors[0][num - 40];
-            } else if (num >= 100 && num < 108) {
-                this.bg = this.ansi_colors[1][num - 100];
-            } else if (num === 38 || num === 48) {
-                // extended set foreground/background color
-
-                // validate that param exists
-                if (sgr_cmds.length > 0) {
-                    // extend color (38=fg, 48=bg)
-                    let is_foreground = num === 38;
-
-                    let mode_cmd = sgr_cmds.shift();
-
-                    // MODE '5' - 256 color palette
-                    if (mode_cmd === "5" && sgr_cmds.length > 0) {
-                        let palette_index = parseInt(sgr_cmds.shift(), 10);
-                        if (palette_index >= 0 && palette_index <= 255) {
-                            if (is_foreground)
-                                this.fg = this.palette_256[palette_index];
-                            else this.bg = this.palette_256[palette_index];
-                        }
-                    }
-
-                    // MODE '2' - True Color
-                    if (mode_cmd === "2" && sgr_cmds.length > 2) {
-                        let r = parseInt(sgr_cmds.shift(), 10);
-                        let g = parseInt(sgr_cmds.shift(), 10);
-                        let b = parseInt(sgr_cmds.shift(), 10);
-
-                        if (
-                            r >= 0 &&
-                            r <= 255 &&
-                            g >= 0 &&
-                            g <= 255 &&
-                            b >= 0 &&
-                            b <= 255
-                        ) {
-                            let c = { rgb: [r, g, b], class_name: "truecolor" };
-                            if (is_foreground) this.fg = c;
-                            else this.bg = c;
-                        }
-                    }
-                }
-            }
-        }
-
-        return orig_txt;
-    }
-
-    // ES5 template string transformer
-    // NOTE: default is multiline (workaround for now til I can
-    // determine flags inline)
-    private rgx(tmplObj, ...subst): RegExp {
-        // Use the 'raw' value so we don't have to double backslash in a template string
-        let regexText: string = tmplObj.raw[0];
-
-        // Remove white-space and comments
-        let wsrgx = /^\s+|\s+\n|\s+#[\s\S]+?\n/gm;
-        let txt2 = regexText.replace(wsrgx, "");
-        return new RegExp(txt2, "m");
+        let result = `<a href="${this.escape_txt_for_html(pkt.url)}">${this.escape_txt_for_html(pkt.text)}</a>`;
+        return result;
     }
 }
+
+//
+// PRIVATE FUNCTIONS
+//
+
+// ES5 template string transformer
+function rgx(tmplObj, ...subst) {
+    // Use the 'raw' value so we don't have to double backslash in a template string
+    let regexText:string = tmplObj.raw[0];
+
+    // Remove white-space and comments
+    let wsrgx = /^\s+|\s+\n|\s*#[\s\S]*?\n|\n/gm;
+    let txt2 = regexText.replace(wsrgx, '');
+    return new RegExp(txt2);
+}
+
+// ES5 template string transformer
+// Multi-Line On
+function rgxG(tmplObj, ...subst) {
+    // Use the 'raw' value so we don't have to double backslash in a template string
+    let regexText:string = tmplObj.raw[0];
+
+    // Remove white-space and comments
+    let wsrgx = /^\s+|\s+\n|\s*#[\s\S]*?\n|\n/gm;
+    let txt2 = regexText.replace(wsrgx, '');
+    return new RegExp(txt2, 'g');
+}
+
