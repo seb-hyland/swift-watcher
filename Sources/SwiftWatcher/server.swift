@@ -33,6 +33,14 @@ actor Server {
             logger: logger
         )
 
+        Task {
+            let cleaner = Cleaner(
+                buildDir: self.serveDir.appending(path: self.config.buildDir),
+                builder: self.builder
+            )
+            await cleaner.run()
+        }
+
         let addr = "\(self.config.ip):\(self.config.port)"
         print("Serving at: http://\(addr)")
 

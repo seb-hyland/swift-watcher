@@ -186,6 +186,11 @@ actor Builder {
         return newBuildId
     }
 
+    /// Build directories that must never be reclaimed during cleanup:
+    func preservedBuildIds() -> Set<String> {
+        Set([self.current?.id.description, self.last?.id.description].compactMap { $0 })
+    }
+
     private func driveBuild(ongoing currentBuild: OngoingBuild) async {
         defer {
             currentBuild.dumpLogs()
