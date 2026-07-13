@@ -1,0 +1,45 @@
+ip = "0.0.0.0"
+
+workDir = "wiki/"
+buildDir = "builds/"
+
+buildStages = [
+  # Sync the persistent checkout to the tip of main (clone on first run).
+  # Records whether dependency manifests changed so the next stage can skip an unnecessary reinstall.
+  { name = "Sync wiki source", script = '''
+set -eu
+REPO="https://github.com/UBC-iGEM/wiki-2026.git"
+if [ -d .git ]; then
+  PREV="$(git rev-parse HEAD)"
+  git fetch --depth 1 origin main
+  git reset --hard FETCH_HEAD
+  if [ -d node_modules ] && git diff --quiet "$PREV" FETCH_HEAD -- package.json package-lock.json web/package.json exporter/package.json; then
+    echo no > .needs_install
+    echo "Dependencies unchanged; install will be skipped."
+  else
+    echo yes > .needs_install
+  fi
+else
+  git clone --depth 1 "$REPO" .
+  echo yes > .needs_install
+fi
+''' },
+
+  # Install deps only when necessary.
+  # Delete the committed lockfile first to re-resolve deps for this platform.
+  # (Had issues with optional deps not resolving for arm)
+  { name = "Install dependencies", script = '''
+set -eu
+if [ "$(cat .needs_install 2>/dev/null)" = "no" ]; then
+  echo "Skipping install (dependencies unchanged)."
+  exit 0
+fi
+rm -f package-lock.json
+npm install --prefer-offline --no-audit --no-fund
+''' },
+
+  { name = "Export from Notion", script = "npm run clean && npm run export" },
+  { name = "Build wiki", script = "FORCE_COLOR=1 npm run build -w web -- --silent" },
+]
+
+artifactPath = "web/dist"

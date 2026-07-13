@@ -13,6 +13,10 @@ struct DefaultBuildDir: DefaultCodableStrategy {
     static var defaultValue: String { return "builds/" }
 }
 
+struct DefaultWorkDir: DefaultCodableStrategy {
+    static var defaultValue: String { return "work/" }
+}
+
 // Config is not mutated after load
 // @unchecked is required because @DefaultCodable mutates once after load
 struct WatcherConfig: Codable, @unchecked Sendable {
@@ -20,12 +24,13 @@ struct WatcherConfig: Codable, @unchecked Sendable {
     @DefaultCodable<DefaultPort> var port: Int32
 
     @DefaultCodable<DefaultBuildDir> var buildDir: String
+    @DefaultCodable<DefaultWorkDir> var workDir: String
+
     let buildStages: [BuildStage]
     let artifactPath: String
 }
 
 struct BuildStage: Codable, Sendable {
     let name: String
-    let program: String
-    let args: [String]
+    let script: String
 }

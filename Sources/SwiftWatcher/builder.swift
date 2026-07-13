@@ -8,6 +8,9 @@ actor Builder {
     private var buildDir: URL {
         self.serveDir.appending(path: self.config.buildDir)
     }
+    private var workDir: URL {
+        self.serveDir.appending(path: self.config.workDir)
+    }
 
     private var current: OngoingBuild?
     var last: CompletedBuild?
@@ -189,7 +192,9 @@ actor Builder {
             self.current = nil
         }
 
+        // Holds logs and (on success) output artifact
         let curBuildDir = self.buildDir.appending(path: currentBuild.id.description)
+        let workDir = self.workDir
 
         let createDirRes = Result {
             try FileManager.default.createDirectory(
@@ -200,7 +205,8 @@ actor Builder {
                 event:
                     BuildEvent(
                         type: .error,
-                        payload: "Failed to create build directory at \(curBuildDir): \(err)",
+                        payload:
+                            "Failed to create build output directory at \(curBuildDir): \(err)",
                         stage: 0)
             )
             return
@@ -208,7 +214,7 @@ actor Builder {
 
         for (stageIdx, stage) in self.config.buildStages.enumerated() {
             switch await self.driveStage(
-                UInt32(stageIdx), of: currentBuild, in: curBuildDir, stage: stage)
+                UInt32(stageIdx), of: currentBuild, in: workDir, stage: stage)
             {
                 // Terminate immediately on failure
                 case .failed: return
@@ -216,20 +222,43 @@ actor Builder {
             }
         }
 
-        let artifactPath = curBuildDir.appending(path: self.config.artifactPath)
-        if !FileManager.default.fileExists(atPath: artifactPath.path) {
+        let lastStageIdx = UInt32(self.config.buildStages.count).saturatingSub(1)
+
+        // Copy build artifact to build output dir
+        let srcArtifact = workDir.appending(path: self.config.artifactPath)
+        let dstArtifact = curBuildDir.appending(path: self.config.artifactPath)
+
+        if !FileManager.default.fileExists(atPath: srcArtifact.path) {
             currentBuild.broadcast(
                 event: BuildEvent(
                     type: .error,
-                    payload: "Expected build output at \(artifactPath)",
-                    stage: UInt32(self.config.buildStages.count).saturatingSub(1)
+                    payload: "Expected build output at \(srcArtifact) was not created",
+                    stage: lastStageIdx
+                )
+            )
+            return
+        }
+
+        let copyRes = Result {
+            try FileManager.default.createDirectory(
+                at: dstArtifact.deletingLastPathComponent(),
+                withIntermediateDirectories: true)
+            try FileManager.default.copyItem(at: srcArtifact, to: dstArtifact)
+        }
+        if case .failure(let err) = copyRes {
+            currentBuild.broadcast(
+                event: BuildEvent(
+                    type: .error,
+                    payload:
+                        "Failed to copy artifact from \(srcArtifact) to \(dstArtifact): \(err)",
+                    stage: lastStageIdx
                 )
             )
             return
         }
 
         // Only on success
-        self.last = CompletedBuild(id: currentBuild.id, timestamp: Date(), dir: artifactPath)
+        self.last = CompletedBuild(id: currentBuild.id, timestamp: Date(), dir: dstArtifact)
     }
 
     enum StageResult {
@@ -240,14 +269,14 @@ actor Builder {
     private func driveStage(
         _ stageIdx: UInt32,
         of currentBuild: OngoingBuild,
-        in buildDir: URL,
+        in workingDir: URL,
         stage: BuildStage
     ) async -> StageResult {
         let spawnResult = await Result {
             try await run(
-                .name(stage.program),
-                arguments: Arguments(stage.args),
-                workingDirectory: FilePath(buildDir.path),
+                .name("sh"),
+                arguments: Arguments(["-c", stage.script]),
+                workingDirectory: FilePath(workingDir.path),
                 error: .combinedWithOutput
             ) { _, stdout in
                 for try await line in stdout.lines() {
@@ -265,8 +294,7 @@ actor Builder {
                 currentBuild.broadcast(
                     event: BuildEvent(
                         type: .error,
-                        payload:
-                            "Failed to spawn command \(stage.program) with args [\(stage.args.joined(separator: ", "))]: \(err)",
+                        payload: "Failed to run stage \"\(stage.name)\": \(err)",
                         stage: stageIdx
                     )
                 )

@@ -7,6 +7,6 @@ DerivedData/
 .swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
 .netrc
 
-/test/*
-!/test/config.toml
+/server/*
+!/server/config.toml
 swiftbuild.log
