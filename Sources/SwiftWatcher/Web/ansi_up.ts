@@ -753,7 +753,8 @@ export class AnsiUp
         if (! this._url_allowlist[parts[0]])
             return '';
 
-        let result = `<a href="${this.escape_txt_for_html(pkt.url)}">${this.escape_txt_for_html(pkt.text)}</a>`;
+        // LOCAL PATCH: open links in a new tab so logs aren't navigated away from
+        let result = `<a target="_blank" rel="noopener noreferrer" href="${this.escape_txt_for_html(pkt.url)}">${this.escape_txt_for_html(pkt.text)}</a>`;
         return result;
     }
 }
