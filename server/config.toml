@@ -6,7 +6,7 @@ buildDir = "builds/"
 buildStages = [
   # Sync the persistent checkout to the tip of main (clone on first run).
   # Records whether dependency manifests changed so the next stage can skip an unnecessary reinstall.
-  { name = "Sync wiki source", script = '''
+  { name = "Update wiki builder", script = '''
 set -eu
 REPO="https://github.com/UBC-iGEM/wiki-2026.git"
 if [ -d .git ]; then
@@ -38,8 +38,8 @@ rm -f package-lock.json
 npm install --prefer-offline --no-audit --no-fund
 ''' },
 
-  { name = "Export from Notion", script = "npm run clean --silent && npm run export --silent" },
-  { name = "Build wiki", script = "FORCE_COLOR=1 npm run build -w web -- --silent" },
+  { name = "Export from Notion", script = "export NODE_OPTIONS=--no-deprecation; npm run clean --silent && npm run export --silent" },
+  { name = "Build wiki", script = "NODE_OPTIONS=--no-deprecation FORCE_COLOR=1 npm run build -w web -- --silent" },
 ]
 
 artifactPath = "web/dist"
