@@ -38,7 +38,7 @@ rm -f package-lock.json
 npm install --prefer-offline --no-audit --no-fund
 ''' },
 
-  { name = "Export from Notion", script = "npm run clean && npm run export" },
+  { name = "Export from Notion", script = "npm run clean --silent && npm run export --silent" },
   { name = "Build wiki", script = "FORCE_COLOR=1 npm run build -w web -- --silent" },
 ]
 

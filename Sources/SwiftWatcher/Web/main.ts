@@ -23,38 +23,81 @@ const scrollToBottom = () => {
     log_container.scrollTop = log_container.scrollHeight;
 };
 
-let ERROR_OCCURED = false;
+// Set by buildResult; a socket close alone must not be read as success
+let build_finished = false;
+
+type StageState = "pending" | "running" | "success" | "failure";
+
+const stage_el = (stage: number): HTMLDetailsElement | null =>
+    document.getElementById(`stage-${stage}`) as HTMLDetailsElement | null;
+
+const setStageState = (stage: number, state: StageState) => {
+    const el = stage_el(stage);
+    if (!el) return;
+    el.classList.remove("pending", "running", "success", "failure");
+    el.classList.add(state);
+    // Keep only the active/failed stage expanded; collapse finished ones.
+    el.open = state === "running" || state === "failure";
+};
+
+// The first stage is active as soon as the page loads.
+setStageState(0, "running");
 
 interface SocketMessage {
-    type: "message" | "error";
+    type: "message" | "error" | "stageResult" | "buildResult";
     payload: string;
     stage: number;
+    success?: boolean;
 }
 
 socket.onmessage = (event) => {
     const message: SocketMessage = JSON.parse(event.data);
-    console.log(message);
 
     switch (message.type) {
         case "message": {
             const logs_elem = document.getElementById(
                 `log-messages-${message.stage}`,
-            )! as HTMLPreElement;
-
-            const html_payload = ansi_up.ansi_to_html(message.payload);
-            logs_elem.innerHTML += "\n" + html_payload;
-
+            ) as HTMLPreElement | null;
+            if (logs_elem) {
+                const html_payload = ansi_up.ansi_to_html(message.payload);
+                logs_elem.insertAdjacentHTML("beforeend", html_payload + "\n");
+            }
             scrollToBottom();
             break;
         }
         case "error": {
-            ERROR_OCCURED = true;
-
             const error_elem = document.getElementById(
                 `log-error-${message.stage}`,
-            )! as HTMLPreElement;
-            error_elem.textContent = message.payload;
-
+            ) as HTMLPreElement | null;
+            if (error_elem) {
+                error_elem.textContent += message.payload + "\n";
+            }
+            // Surface the failing stage immediately.
+            setStageState(message.stage, "failure");
+            scrollToBottom();
+            break;
+        }
+        case "stageResult": {
+            if (message.success) {
+                setStageState(message.stage, "success");
+                // Hand off to the next stage, if there is one.
+                setStageState(message.stage + 1, "running");
+            } else {
+                setStageState(message.stage, "failure");
+            }
+            scrollToBottom();
+            break;
+        }
+        case "buildResult": {
+            build_finished = true;
+            // Nothing should still be spinning once the build is over.
+            document
+                .querySelectorAll(".stage.running")
+                .forEach((el) => el.classList.remove("running"));
+            load_build_button.textContent = message.success
+                ? "Build succeeded! Go to homepage…"
+                : "Build failed. Return to previous homepage…";
+            load_build_button.disabled = false;
             scrollToBottom();
             break;
         }
@@ -62,11 +105,9 @@ socket.onmessage = (event) => {
 };
 
 socket.onclose = (_) => {
-    const button_message = ERROR_OCCURED
-        ? "Build failed. Return to previous homepage..."
-        : "Build succeeded! Go to homepage...";
-    load_build_button.textContent = button_message;
+    if (build_finished) return;
+    // Closed without a verdict: don't claim success.
+    load_build_button.textContent = "Connection lost. Return to homepage…";
     load_build_button.disabled = false;
-
     scrollToBottom();
 };

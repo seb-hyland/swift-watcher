@@ -57,7 +57,10 @@ actor Builder {
         func dumpLogs() {
             let fm = FileManager.default
             for event in self.history {
-                let logFilePath = event.logFilePath(in: self.buildDir)
+                guard let logFilePath = event.logFilePath(in: self.buildDir) else {
+                    // Lifecycle event; nothing to persist.
+                    continue
+                }
 
                 do {
                     if !fm.fileExists(atPath: logFilePath.path) {
@@ -97,18 +100,33 @@ actor Builder {
         enum BuildEventType: String, Codable {
             case message
             case error
+            // A stage finished; `success` says whether it passed.
+            case stageResult
+            // The whole build finished; `success` says whether it passed.
+            case buildResult
         }
 
         let type: BuildEventType
         let payload: String
         let stage: UInt32
+        // Only set for `stageResult` / `buildResult`.
+        let success: Bool?
 
-        func logFilePath(in buildDir: URL) -> URL {
-            let fileName =
-                switch self.type {
-                    case .message: ".watcher_log_\(self.stage)"
-                    case .error: ".watcher_err_\(self.stage)"
-                }
+        init(type: BuildEventType, payload: String, stage: UInt32, success: Bool? = nil) {
+            self.type = type
+            self.payload = payload
+            self.stage = stage
+            self.success = success
+        }
+
+        // Nil for lifecycle events, which are reconstructed on replay
+        func logFilePath(in buildDir: URL) -> URL? {
+            let fileName: String
+            switch self.type {
+                case .message: fileName = ".watcher_log_\(self.stage)"
+                case .error: fileName = ".watcher_err_\(self.stage)"
+                case .stageResult, .buildResult: return nil
+            }
             return buildDir.appending(path: fileName)
         }
     }
@@ -133,38 +151,69 @@ actor Builder {
 
         let (stream, continuation) = EventStream.makeStream()
 
-        // Stream as a continuation that loads background files asynchronously
+        // Replay a finished build from its on-disk logs, reconstructing results
         Task {
             let thisBuildDir = self.buildDir.appending(path: id.description)
+            var sawError = false
+            var lastStageWithOutput = -1
 
             for stageIdx in 0..<self.config.buildStages.count {
-                let stageIdx = UInt32(stageIdx)
+                let stage = UInt32(stageIdx)
 
-                let msgEvent = BuildEvent(type: .message, payload: "", stage: stageIdx)
-                let errEvent = BuildEvent(type: .error, payload: "", stage: stageIdx)
+                let msgPath = thisBuildDir.appending(path: ".watcher_log_\(stage)")
+                let errPath = thisBuildDir.appending(path: ".watcher_err_\(stage)")
 
-                let msgLogsPath = msgEvent.logFilePath(in: thisBuildDir)
-                let errLogsPath = errEvent.logFilePath(in: thisBuildDir)
+                let msgData = try? Data(contentsOf: msgPath)
+                let errData = try? Data(contentsOf: errPath)
 
-                if let msgLogs = try? Data(contentsOf: msgLogsPath) {
+                // Drop the trailing newline so replay matches the live stream
+                func trimTrailingNewline(_ s: String) -> String {
+                    s.hasSuffix("\n") ? String(s.dropLast()) : s
+                }
+
+                if let msgData, !msgData.isEmpty {
                     continuation.yield(
                         BuildEvent(
                             type: .message,
-                            payload: String(buffer: .init(data: msgLogs)),
-                            stage: stageIdx
+                            payload: trimTrailingNewline(String(decoding: msgData, as: UTF8.self)),
+                            stage: stage
                         )
                     )
+                    lastStageWithOutput = stageIdx
                 }
-                if let errLogs = try? Data(contentsOf: errLogsPath) {
+
+                if let errData, !errData.isEmpty {
                     continuation.yield(
                         BuildEvent(
                             type: .error,
-                            payload: String(buffer: .init(data: errLogs)),
-                            stage: stageIdx
+                            payload: trimTrailingNewline(String(decoding: errData, as: UTF8.self)),
+                            stage: stage
                         )
                     )
+                    continuation.yield(
+                        BuildEvent(type: .stageResult, payload: "", stage: stage, success: false))
+                    sawError = true
+                    lastStageWithOutput = stageIdx
+                    // The build stops at the first failing stage.
+                    break
+                } else if msgData != nil {
+                    continuation.yield(
+                        BuildEvent(type: .stageResult, payload: "", stage: stage, success: true))
                 }
             }
+
+            // Only assert a verdict if something was found on disk
+            if sawError || lastStageWithOutput >= 0 {
+                continuation.yield(
+                    BuildEvent(
+                        type: .buildResult,
+                        payload: "",
+                        stage: UInt32(max(0, lastStageWithOutput)),
+                        success: !sawError
+                    )
+                )
+            }
+            continuation.finish()
         }
 
         return BuildLog(history: [], stream: stream)
@@ -204,6 +253,9 @@ actor Builder {
         let createDirRes = Result {
             try FileManager.default.createDirectory(
                 at: curBuildDir, withIntermediateDirectories: true)
+            // Stages run here; must exist before the first stage spawns
+            try FileManager.default.createDirectory(
+                at: workDir, withIntermediateDirectories: true)
         }
         if case .failure(let err) = createDirRes {
             currentBuild.broadcast(
@@ -211,9 +263,11 @@ actor Builder {
                     BuildEvent(
                         type: .error,
                         payload:
-                            "Failed to create build output directory at \(curBuildDir): \(err)",
+                            "Failed to create build directories: \(err)",
                         stage: 0)
             )
+            currentBuild.broadcast(
+                event: BuildEvent(type: .buildResult, payload: "", stage: 0, success: false))
             return
         }
 
@@ -222,7 +276,12 @@ actor Builder {
                 UInt32(stageIdx), of: currentBuild, in: workDir, stage: stage)
             {
                 // Terminate immediately on failure
-                case .failed: return
+                case .failed:
+                    currentBuild.broadcast(
+                        event: BuildEvent(
+                            type: .buildResult, payload: "", stage: UInt32(stageIdx),
+                            success: false))
+                    return
                 case .succeeded: ()
             }
         }
@@ -241,6 +300,9 @@ actor Builder {
                     stage: lastStageIdx
                 )
             )
+            currentBuild.broadcast(
+                event: BuildEvent(
+                    type: .buildResult, payload: "", stage: lastStageIdx, success: false))
             return
         }
 
@@ -259,11 +321,16 @@ actor Builder {
                     stage: lastStageIdx
                 )
             )
+            currentBuild.broadcast(
+                event: BuildEvent(
+                    type: .buildResult, payload: "", stage: lastStageIdx, success: false))
             return
         }
 
         // Only on success
         self.last = CompletedBuild(id: currentBuild.id, timestamp: Date(), dir: dstArtifact)
+        currentBuild.broadcast(
+            event: BuildEvent(type: .buildResult, payload: "", stage: lastStageIdx, success: true))
     }
 
     enum StageResult {
@@ -277,7 +344,17 @@ actor Builder {
         in workingDir: URL,
         stage: BuildStage
     ) async -> StageResult {
-        let spawnResult = await Result {
+        func fail(_ message: String) -> StageResult {
+            currentBuild.broadcast(
+                event: BuildEvent(type: .error, payload: message, stage: stageIdx))
+            currentBuild.broadcast(
+                event: BuildEvent(type: .stageResult, payload: "", stage: stageIdx, success: false))
+            return .failed
+        }
+
+        // A pipe keeps tools in non-interactive mode; `lines()` streams output
+        // as it arrives so the dashboard updates line-by-line.
+        let result = await Result {
             try await run(
                 .name("sh"),
                 arguments: Arguments(["-c", stage.script]),
@@ -286,40 +363,21 @@ actor Builder {
             ) { _, stdout in
                 for try await line in stdout.lines() {
                     currentBuild.broadcast(
-                        event: BuildEvent(type: .message, payload: line, stage: stageIdx)
-                    )
+                        event: BuildEvent(type: .message, payload: line, stage: stageIdx))
                 }
             }
         }
 
-        let exitStatus: ExecutionOutcome<()>
-        switch spawnResult {
-            case .success(let status): exitStatus = status
+        switch result {
             case .failure(let err):
-                currentBuild.broadcast(
-                    event: BuildEvent(
-                        type: .error,
-                        payload: "Failed to run stage \"\(stage.name)\": \(err)",
-                        stage: stageIdx
-                    )
-                )
-                return .failed
-        }
-
-        if !exitStatus.terminationStatus.isSuccess {
-            currentBuild.broadcast(
-                event: BuildEvent(
-                    type: .error,
-                    payload: "Build failed with code \(exitStatus.terminationStatus)",
-                    stage: stageIdx))
-            return .failed
+                return fail("Failed to run stage \"\(stage.name)\": \(err)")
+            case .success(let outcome) where !outcome.terminationStatus.isSuccess:
+                return fail("Stage failed with code \(outcome.terminationStatus)")
+            case .success: ()
         }
 
         currentBuild.broadcast(
-            event: BuildEvent(
-                type: .message,
-                payload: "========== Stage completed successfully ==========",
-                stage: stageIdx))
+            event: BuildEvent(type: .stageResult, payload: "", stage: stageIdx, success: true))
         return .succeeded
     }
 }

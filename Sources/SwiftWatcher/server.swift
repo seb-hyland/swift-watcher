@@ -64,11 +64,23 @@ actor Server {
     ) async throws -> Response {
         let id = try context.parameters.require("id")
 
+        func htmlEscape(_ s: String) -> String {
+            s.replacingOccurrences(of: "&", with: "&amp;")
+                .replacingOccurrences(of: "<", with: "&lt;")
+                .replacingOccurrences(of: ">", with: "&gt;")
+        }
+
+        // Each stage is a collapsible card the frontend drives via status events
         let logDivs = self.config.buildStages.enumerated().map { idx, stage in
             """
-                <h1 class="build-stage-name">\(stage.name)</h1>
-                <pre class="log-messages" id="log-messages-\(idx)"></pre>
-                <pre class="log-error" id="log-error-\(idx)"></pre>
+                <details class="stage" id="stage-\(idx)" data-stage="\(idx)">
+                    <summary>
+                        <span class="status" aria-hidden="true"></span>
+                        <span class="stage-name">\(htmlEscape(stage.name))</span>
+                    </summary>
+                    <pre class="log-messages" id="log-messages-\(idx)"></pre>
+                    <pre class="log-error" id="log-error-\(idx)"></pre>
+                </details>
             """
         }.joined(separator: "")
         let document = String(bytes: PackageResources.build_html, encoding: String.Encoding.utf8)!
@@ -195,12 +207,13 @@ actor Server {
             return
                 """
                     <header style="
-                        background-color: LightGray;
-                        color: #3C3836;
-                        text-align: center;
-                        padding: 15px 0;
-                        margin: 0 0 20px;
-                        font-style: oblique;
+                        background: #eaeaea;
+                        color: #2b2b2b;
+                        border: 1px solid #d4d4d2;
+                        border-radius: 6px;
+                        padding: 10px 14px;
+                        margin: 20px;
+                        font-size: 1.05rem;
                         box-sizing: border-box;
                     ">\(bannerMsg)</header>
                 """

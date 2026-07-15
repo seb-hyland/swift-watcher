@@ -5,8 +5,8 @@ import Foundation
     Does not touch the currently served build.
 */
 actor Cleaner {
-    static let expiry = TimeInterval(60 * 60)
-    static let sweep = Duration.seconds(5 * 60)
+    static let expiry = TimeInterval(60 * 60) // One hour
+    static let sweep = Duration.seconds(5 * 60) // 5 minutes
 
     private let buildDir: URL
     private let builder: Builder
