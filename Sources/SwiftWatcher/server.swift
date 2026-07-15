@@ -78,8 +78,10 @@ actor Server {
                         <span class="status" aria-hidden="true"></span>
                         <span class="stage-name">\(htmlEscape(stage.name))</span>
                     </summary>
-                    <pre class="log-messages" id="log-messages-\(idx)"></pre>
-                    <pre class="log-error" id="log-error-\(idx)"></pre>
+                    <div class="stage-logs">
+                        <pre class="log-messages" id="log-messages-\(idx)"></pre>
+                        <pre class="log-error" id="log-error-\(idx)"></pre>
+                    </div>
                 </details>
             """
         }.joined(separator: "")

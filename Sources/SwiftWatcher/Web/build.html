@@ -41,7 +41,7 @@
                 font-family: "Monaspace Xenon", serif;
                 background: var(--bg);
                 color: var(--fg);
-                padding: 20px;
+                padding: 40px 44px 24px;
             }
 
             h1 {
@@ -129,17 +129,31 @@
                 }
             }
 
+            /* Scrollable log region per stage; hidden until it has content so
+               a freshly-opened stage doesn't leave an empty gap. */
+            .stage-logs {
+                max-height: 320px;
+                overflow-y: auto;
+                border-top: 1px solid var(--border);
+            }
+            .stage-logs:not(:has(pre:not(:empty))) {
+                display: none;
+            }
+
             pre {
                 font-family: "Monaspace Xenon", monospace;
                 font-size: 0.9rem;
                 margin: 0;
-                padding: 0 14px 12px 40px;
+                padding: 12px 16px;
                 white-space: pre-wrap;
                 word-break: break-word;
             }
             .log-messages:empty,
             .log-error:empty {
                 display: none;
+            }
+            .log-error:not(:empty) {
+                padding-top: 0;
             }
             .log-error {
                 color: var(--failure);

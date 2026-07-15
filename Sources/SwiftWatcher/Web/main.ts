@@ -23,6 +23,14 @@ const scrollToBottom = () => {
     log_container.scrollTop = log_container.scrollHeight;
 };
 
+// Keep a stage's own log box pinned to its latest line
+const scrollLogsToBottom = (stage: number) => {
+    const el = document
+        .getElementById(`log-messages-${stage}`)
+        ?.closest(".stage-logs");
+    if (el) el.scrollTop = el.scrollHeight;
+};
+
 // Set by buildResult; a socket close alone must not be read as success
 let build_finished = false;
 
@@ -62,6 +70,7 @@ socket.onmessage = (event) => {
                 const html_payload = ansi_up.ansi_to_html(message.payload);
                 logs_elem.insertAdjacentHTML("beforeend", html_payload + "\n");
             }
+            scrollLogsToBottom(message.stage);
             scrollToBottom();
             break;
         }
@@ -74,6 +83,7 @@ socket.onmessage = (event) => {
             }
             // Surface the failing stage immediately.
             setStageState(message.stage, "failure");
+            scrollLogsToBottom(message.stage);
             scrollToBottom();
             break;
         }
