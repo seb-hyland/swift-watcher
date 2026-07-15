@@ -37,7 +37,10 @@ const setStageState = (stage: number, state: StageState) => {
     if (!el) return;
     el.classList.remove("pending", "running", "success", "failure");
     el.classList.add(state);
-    el.open = state === "running" || state === "failure";
+    el.open =
+        state === "running" ||
+        state === "failure" ||
+        el.dataset.showLogs === "true";
 };
 
 // The first stage is active as soon as the page loads.

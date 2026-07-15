@@ -72,8 +72,10 @@ actor Server {
 
         // Each stage is a collapsible card the frontend drives via status events
         let logDivs = self.config.buildStages.enumerated().map { idx, stage in
-            """
-                <details class="stage" id="stage-\(idx)" data-stage="\(idx)">
+            // showLogs stages start expanded and are never auto-collapsed by the frontend
+            let showLogs = stage.showLogs ? #" data-show-logs="true" open"# : ""
+            return """
+                <details class="stage" id="stage-\(idx)" data-stage="\(idx)"\(showLogs)>
                     <summary>
                         <span class="status" aria-hidden="true"></span>
                         <span class="stage-name">\(htmlEscape(stage.name))</span>
@@ -217,6 +219,7 @@ actor Server {
                         margin: 20px;
                         font-size: 1.05rem;
                         box-sizing: border-box;
+                        text-align: center;
                     ">\(bannerMsg)</header>
                 """
         }
