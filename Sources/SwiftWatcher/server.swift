@@ -17,13 +17,16 @@ actor Server {
     func run() async {
         let router = Router(context: BasicWebSocketRequestContext.self)
 
-        router.get("/rebuild", use: self.rebuild)
-        router.get("/build/:id", use: self.buildStatus)
-        router.ws(
-            "/build/:id/ws",
-            onUpgrade: self.buildStatusWebsocket
-        )
-        router.add(middleware: BuildDirServer(builder: self.builder))
+        let basePath = self.config.basePath
+        router.group(RouterPath(basePath))
+            .get("rebuild", use: self.rebuild)
+            .get("build/:id", use: self.buildStatus)
+            .ws("build/:id/ws", onUpgrade: self.buildStatusWebsocket)
+
+        if !basePath.isEmpty {
+            router.get("/") { _, _ in Response.redirect(to: "\(basePath)/", type: .normal) }
+        }
+        router.add(middleware: BuildDirServer(builder: self.builder, basePath: basePath))
 
         let logger = Logger(label: "NoopLogger", factory: { _ in SwiftLogNoOpLogHandler() })
         let server = Application(
@@ -42,7 +45,7 @@ actor Server {
         }
 
         let addr = "\(self.config.ip):\(self.config.port)"
-        print("Serving at: http://\(addr)")
+        print("Serving at: http://\(addr)\(basePath)/")
 
         let serveRes = await Result({ try await server.run() })
         if case .failure(let err) = serveRes {
@@ -55,7 +58,7 @@ actor Server {
         context: BasicWebSocketRequestContext
     ) async -> Response {
         let id = await self.builder.tryRebuild()
-        return Response.redirect(to: "/build/\(id)", type: .normal)
+        return Response.redirect(to: "\(self.config.basePath)/build/\(id)", type: .normal)
     }
 
     private func buildStatus(
@@ -75,17 +78,17 @@ actor Server {
             // showLogs stages start expanded and are never auto-collapsed by the frontend
             let showLogs = stage.showLogs ? #" data-show-logs="true" open"# : ""
             return """
-                <details class="stage" id="stage-\(idx)" data-stage="\(idx)"\(showLogs)>
-                    <summary>
-                        <span class="status" aria-hidden="true"></span>
-                        <span class="stage-name">\(htmlEscape(stage.name))</span>
-                    </summary>
-                    <div class="stage-logs">
-                        <pre class="log-messages" id="log-messages-\(idx)"></pre>
-                        <pre class="log-error" id="log-error-\(idx)"></pre>
-                    </div>
-                </details>
-            """
+                    <details class="stage" id="stage-\(idx)" data-stage="\(idx)"\(showLogs)>
+                        <summary>
+                            <span class="status" aria-hidden="true"></span>
+                            <span class="stage-name">\(htmlEscape(stage.name))</span>
+                        </summary>
+                        <div class="stage-logs">
+                            <pre class="log-messages" id="log-messages-\(idx)"></pre>
+                            <pre class="log-error" id="log-error-\(idx)"></pre>
+                        </div>
+                    </details>
+                """
         }.joined(separator: "")
         let document = String(bytes: PackageResources.build_html, encoding: String.Encoding.utf8)!
             .replacingPlaceholders([
@@ -136,6 +139,7 @@ actor Server {
 
     private struct BuildDirServer: RouterMiddleware {
         let builder: Builder
+        let basePath: String
 
         typealias Input = Request
         typealias Context = BasicWebSocketRequestContext
@@ -145,11 +149,13 @@ actor Server {
             _ request: Input, context: Context, next: (Input, Context) async throws -> Output
         ) async throws -> Output {
             guard let lastBuild = await self.builder.last else {
-                return Response.redirect(to: "/rebuild", type: .normal)
+                return Response.redirect(to: "\(self.basePath)/rebuild", type: .normal)
             }
 
             let files: FileMiddleware<Context, LocalFileSystem> = FileMiddleware(
-                lastBuild.dir.path, searchForIndexHtml: true)
+                lastBuild.dir.path,
+                urlBasePath: self.basePath.isEmpty ? nil : self.basePath,
+                searchForIndexHtml: true)
             let resp = try await files.handle(request, context: context, next: next)
 
             guard resp.headers[.contentType]?.contains("text/html") == true else {
@@ -186,7 +192,7 @@ actor Server {
             }
 
             func buildLink(for id: BuildId, displaying text: String) -> String {
-                anchor(to: "/build/\(id)", displaying: text)
+                anchor(to: "\(self.basePath)/build/\(id)", displaying: text)
             }
 
             func displayLocal(time: Date) -> String {
@@ -206,7 +212,7 @@ actor Server {
                             + "A rebuild is in progress; \(buildLink(for: curId, displaying: "click here")) to see its status."
                     case .none:
                         "You are viewing \(serveBuildLink), which finished on \(displayLocal(time: serveBuild.timestamp))."
-                            + "To rebuild, click \(anchor(to: "/rebuild", displaying: "here"))."
+                            + "To rebuild, click \(anchor(to: "\(self.basePath)/rebuild", displaying: "here"))."
                 }
             return
                 """

@@ -14,7 +14,8 @@ const load_build_button = document.getElementById(
     "load-build-button",
 )! as HTMLButtonElement;
 load_build_button.addEventListener("click", () => {
-    window.location.href = "/";
+    // Strip "/build/<id>" to get back to the (possibly prefixed) root
+    window.location.href = current_path.replace(/\/build\/[^/]+\/?$/, "/");
 });
 
 const log_container = document.getElementById(

@@ -17,6 +17,10 @@ struct DefaultWorkDir: DefaultCodableStrategy {
     static var defaultValue: String { return "work/" }
 }
 
+struct DefaultPathPrefix: DefaultCodableStrategy {
+    static var defaultValue: String { return "" }
+}
+
 struct DefaultFalse: DefaultCodableStrategy {
     static var defaultValue: Bool { return false }
 }
@@ -26,12 +30,19 @@ struct DefaultFalse: DefaultCodableStrategy {
 struct WatcherConfig: Codable, @unchecked Sendable {
     @DefaultCodable<DefaultIp> var ip: String
     @DefaultCodable<DefaultPort> var port: Int32
+    @DefaultCodable<DefaultPathPrefix> var pathPrefix: String
 
     @DefaultCodable<DefaultBuildDir> var buildDir: String
     @DefaultCodable<DefaultWorkDir> var workDir: String
 
     let buildStages: [BuildStage]
     let artifactPath: String
+
+    // pathPrefix normalized to "" or "/prefix" (leading slash, no trailing slash)
+    var basePath: String {
+        let trimmed = self.pathPrefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return trimmed.isEmpty ? "" : "/\(trimmed)"
+    }
 }
 
 // @unchecked is required because @DefaultCodable mutates once after load
