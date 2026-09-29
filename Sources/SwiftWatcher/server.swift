@@ -128,12 +128,18 @@ actor Server {
             buildLog = await self.builder.subscribeCompleted(id: parsedId)
         }
 
-        for logMsg in buildLog.history {
-            await sendMessage(logMsg)
-        }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask {
+                for try await _ in inbound {}
+            }
+            group.addTask {
+                for logMsg in buildLog.history { await sendMessage(logMsg) }
+                for await logMsg in buildLog.stream { await sendMessage(logMsg) }
+            }
 
-        for await logMsg in buildLog.stream {
-            await sendMessage(logMsg)
+            // Whichever finishes first (client left, or build log completed) ends the connection
+            try await group.next()
+            group.cancelAll()
         }
     }
 
