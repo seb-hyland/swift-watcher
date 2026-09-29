@@ -156,7 +156,15 @@ actor Server {
                 lastBuild.dir.path,
                 urlBasePath: self.basePath.isEmpty ? nil : self.basePath,
                 searchForIndexHtml: true)
-            let resp = try await files.handle(request, context: context, next: next)
+            var resp = try await files.handle(request, context: context, next: next)
+
+            if !self.basePath.isEmpty, (300..<400).contains(resp.status.code),
+                let location = resp.headers[.location], location.hasPrefix("/"),
+                !location.hasPrefix("\(self.basePath)/")
+            {
+                resp.headers[.location] = self.basePath + location
+                return resp
+            }
 
             guard resp.headers[.contentType]?.contains("text/html") == true else {
                 // Not an HTML
