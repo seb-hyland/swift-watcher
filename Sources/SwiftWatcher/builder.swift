@@ -361,9 +361,11 @@ actor Builder {
                 workingDirectory: FilePath(workingDir.path),
                 error: .combinedWithOutput
             ) { _, stdout in
-                for try await line in stdout.lines() {
+                for try await rawLine in stdout.lines() {
+                    var line = Substring(rawLine) // trim newline char at end
+                    while let last = line.last, last.isNewline { line.removeLast() }
                     currentBuild.broadcast(
-                        event: BuildEvent(type: .message, payload: line, stage: stageIdx))
+                        event: BuildEvent(type: .message, payload: String(line), stage: stageIdx))
                 }
             }
         }
